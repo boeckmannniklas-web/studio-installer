@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+if [ "$1" = "configure" ]; then
+  mkdir -p /opt/studio
+  chmod 755 /opt/studio
+  install -d -m 700 /var/lib/studio-installer
+  command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications || true
+  command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    # Bereits eingerichtet: der Assistent bleibt aus, bis ihn jemand mit studio-einrichtung holt.
+    if [ ! -f /opt/studio/installiert.json ]; then
+      systemctl enable --now studio-setup.service || true
+    else
+      systemctl try-restart studio-setup.service || true
+    fi
+  else
+    # Im Installer des Studio-Images (chroot): nur einschalten, gestartet wird beim ersten Boot.
+    systemctl enable studio-setup.service >/dev/null 2>&1 || true
+  fi
+fi
+exit 0

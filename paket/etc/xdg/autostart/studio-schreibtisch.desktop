@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Studio-Icon einrichten
+Exec=/usr/lib/studio-installer/schreibtisch.sh
+NoDisplay=true
+X-GNOME-Autostart-Phase=Applications
+OnlyShowIn=GNOME;Unity;

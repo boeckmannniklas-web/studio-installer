@@ -1,0 +1,7 @@
+#!/bin/sh
+# Einrichtungs-Assistent erneut öffnen, auch wenn Studio schon installiert ist
+# (z. B. Fernwartung nachträglich ändern). Braucht ein Administrator-Konto.
+pkexec /bin/systemctl start studio-setup.service || exit 1
+i=0
+while [ ! -r /run/studio-setup/token ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
+exec xdg-open "http://127.0.0.1:8099/?t=$(cat /run/studio-setup/token)"

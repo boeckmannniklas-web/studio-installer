@@ -1,0 +1,18 @@
+[Unit]
+Description=Studio-Einrichtung (lokaler Assistent auf 127.0.0.1:8099)
+Documentation=https://github.com/boeckmannniklas-web/studio-installer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/studio-installer/setup.py
+RuntimeDirectory=studio-setup
+RuntimeDirectoryMode=0750
+StateDirectory=studio-installer
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

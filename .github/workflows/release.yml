@@ -1,0 +1,52 @@
+# Tag v<version> → Tests, .deb bauen, Release mit studio-installer.deb und install.sh.
+# Der Einzeiler lädt immer aus „latest“:
+#   curl -fsSL https://github.com/boeckmannniklas-web/studio-installer/releases/latest/download/install.sh | sudo bash
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Vorhandener Tag, z. B. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
+
+      - name: Prüfen
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq python3-cryptography shellcheck lintian >/dev/null
+          python3 -m py_compile paket/opt/studio-installer/*.py
+          python3 -m unittest discover -s test -v
+          shellcheck -S warning install.sh baue-deb.sh iso/baue-iso.sh test/vm-test.sh \
+            paket/usr/bin/studio paket/usr/bin/studio-einrichtung paket/usr/lib/studio-installer/schreibtisch.sh
+
+      - name: .deb bauen
+        run: |
+          ./baue-deb.sh "${TAG#v}"
+          # Zur Information – /opt und eigene Dienste sind hier gewollt.
+          lintian --no-tag-display-limit dist/studio-installer.deb || true
+
+      - name: GitHub-Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${TAG#v}"
+          DATEIEN=(dist/studio-installer.deb "dist/studio-installer_${V}_all.deb" install.sh)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${DATEIEN[@]}" --clobber
+          else
+            gh release create "$TAG" "${DATEIEN[@]}" --verify-tag --title "Studio-Installer $V" --generate-notes
+          fi

@@ -1,0 +1,18 @@
+#!/bin/sh
+# Studio-Icon: nach der Einrichtung die Kasse öffnen, vorher den Einrichtungs-Assistenten.
+if [ -f /opt/studio/installiert.json ]; then
+  exec xdg-open http://localhost/
+fi
+TOKEN_DATEI=/run/studio-setup/token
+if [ ! -r "$TOKEN_DATEI" ]; then
+  # Dienst läuft nicht (oder Benutzer ist kein Administrator): einmal mit Rückfrage starten.
+  pkexec /bin/systemctl start studio-setup.service || true
+  i=0
+  while [ ! -r "$TOKEN_DATEI" ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
+fi
+if [ ! -r "$TOKEN_DATEI" ]; then
+  notify-send "Studio" "Die Einrichtung lässt sich nur mit einem Administrator-Konto starten." 2>/dev/null \
+    || echo "Die Einrichtung lässt sich nur mit einem Administrator-Konto starten." >&2
+  exit 1
+fi
+exec xdg-open "http://127.0.0.1:8099/?t=$(cat "$TOKEN_DATEI")"

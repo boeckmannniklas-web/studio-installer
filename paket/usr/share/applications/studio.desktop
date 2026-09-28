@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Studio
+GenericName=Studio-Kasse
+Comment=Studio öffnen – beim ersten Mal die Einrichtung
+Exec=/usr/bin/studio
+Icon=studio
+Terminal=false
+Categories=Office;Finance;
+StartupNotify=false

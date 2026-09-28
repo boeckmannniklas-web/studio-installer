@@ -1,0 +1,13 @@
+Package: studio-installer
+Version: 0.1.0
+Section: admin
+Priority: optional
+Architecture: all
+Depends: python3 (>= 3.10), python3-cryptography, curl, ca-certificates, iproute2, xdg-utils, xdg-user-dirs, policykit-1 | pkexec
+Recommends: libnotify-bin
+Maintainer: Studio-Plattform <noreply@ki-sunlounge.de>
+Homepage: https://github.com/boeckmannniklas-web/studio-installer
+Description: Einrichtung eines Studio-Edge-Servers
+ Legt das Studio-Icon auf den Schreibtisch. Beim ersten Klick führt ein Assistent
+ durch die Einrichtung: Docker installieren, Studio-Lizenz aktivieren, Fernwartung
+ wählen, Konfiguration anlegen, Studio aus der Cloud laden und starten.

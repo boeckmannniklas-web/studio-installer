@@ -1,0 +1,92 @@
+/* Tokens nach studio/docs/DESIGN.md („Kassenflow POS“) */
+:root {
+  --bg: #f4f7fb; --surface: #ffffff; --surface-muted: #f7f9fc; --border: #e4e9f2; --border-soft: #eef2f8;
+  --text: #101a2e; --text-2: #54637a; --muted: #8a97ab;
+  --primary: #1c56e5; --primary-soft: #eef3ff; --primary-rand: #cddcfb; --navy: #0d1a30; --accent: #f5b301;
+  --success: #12a150; --success-soft: #e9f8ef;
+  --warning: #e08700; --warning-soft: #fff8ee; --warning-rand: #f6e2c3; --warning-text: #6b5330;
+  --danger: #d13b3b; --danger-soft: #fdecec;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  min-height: 100vh;
+}
+.kopf {
+  height: 80px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.marke { font-weight: 800; font-size: 17px; letter-spacing: .02em; color: var(--navy); }
+.akzent { color: var(--accent); margin-left: 5px; }
+.caption { color: var(--muted); font-size: 12.5px; }
+.shell { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 24px; padding: 24px 28px; max-width: 1180px; margin: 0 auto; }
+@media (max-width: 860px) { .shell { grid-template-columns: 1fr; } .schritte { display: none; } }
+
+.schritte ol { list-style: none; margin: 0; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; }
+.schritte li {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; color: var(--text-2);
+  font-weight: 600; cursor: default;
+}
+.schritte li.erreichbar { cursor: pointer; }
+.schritte li.aktiv { background: var(--primary); color: #fff; }
+.schritte li .punkt {
+  width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11.5px; font-weight: 800; background: var(--surface-muted); border: 1px solid var(--border); color: var(--text-2);
+}
+.schritte li.erledigt .punkt { background: var(--success-soft); border-color: var(--success-soft); color: var(--success); }
+.schritte li.aktiv .punkt { background: rgba(255,255,255,.18); border-color: transparent; color: #fff; }
+
+.karte { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 26px 28px; box-shadow: 0 1px 2px rgba(16,26,46,.04); }
+h1 { font-size: 18px; font-weight: 800; margin: 0 0 4px; }
+h2 { font-size: 14px; font-weight: 700; margin: 18px 0 6px; }
+p { margin: 6px 0; }
+.zeile { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 18px; }
+.feld { display: block; margin-top: 14px; }
+.feld > span { display: block; margin-bottom: 6px; font-size: 12.5px; font-weight: 600; color: var(--text-2); }
+.feld .hinweis { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); font-weight: 400; }
+input[type=text], input[type=password], select, textarea {
+  width: 100%; font: inherit; color: var(--text); background: var(--surface-muted); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px 12px; outline: none;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(28,86,229,.16); }
+textarea { min-height: 110px; font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; font-size: 12px; word-break: break-all; }
+.raster { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+@media (max-width: 640px) { .raster { grid-template-columns: 1fr; } }
+
+button, .knopf {
+  font: inherit; font-weight: 700; border-radius: 12px; padding: 10px 16px; border: 1px solid var(--border);
+  background: var(--surface-muted); color: var(--text-2); cursor: pointer; text-decoration: none; display: inline-flex; gap: 8px; align-items: center;
+}
+button.haupt, .knopf.haupt { background: var(--navy); border-color: var(--navy); color: #fff; }
+button.blau { background: var(--primary); border-color: var(--primary); color: #fff; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+
+.box { border-radius: 12px; padding: 12px 14px; margin-top: 14px; font-size: 13px; }
+.box.ok { background: var(--success-soft); color: var(--success); }
+.box.warnung { background: var(--warning-soft); border: 1px solid var(--warning-rand); color: var(--warning-text); }
+.box.fehler { background: var(--danger-soft); color: var(--danger); }
+.box.info { background: var(--primary-soft); border: 1px solid var(--primary-rand); color: var(--navy); }
+.badge { border-radius: 9px; padding: 3px 8px; font-size: 11.5px; font-weight: 700; }
+.badge.ok { background: var(--success-soft); color: var(--success); }
+.badge.nein { background: var(--danger-soft); color: var(--danger); }
+
+.wahl { display: grid; gap: 10px; margin-top: 14px; }
+.wahl label {
+  display: block; border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; cursor: pointer; background: var(--surface);
+}
+.wahl label.gewaehlt { border-color: var(--primary-rand); background: var(--primary-soft); }
+.wahl label.aus { opacity: .5; cursor: not-allowed; }
+.wahl input[type=radio] { margin-right: 8px; }
+.wahl .titel { font-weight: 700; }
+.wahl .text { display: block; margin: 4px 0 0 24px; color: var(--text-2); font-size: 12.5px; }
+
+pre.protokoll {
+  margin-top: 14px; max-height: 340px; overflow: auto; background: var(--navy); color: #d7dfec; border-radius: 12px;
+  padding: 12px 14px; font: 11.5px/1.5 ui-monospace, 'SFMono-Regular', Menlo, monospace; white-space: pre-wrap; word-break: break-all;
+}
+table.werte { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 12.5px; }
+table.werte td { border-top: 1px solid var(--border-soft); padding: 6px 4px; vertical-align: top; }
+table.werte td:first-child { font-family: ui-monospace, Menlo, monospace; color: var(--text-2); width: 42%; }
+.zugang { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin-top: 10px; font-size: 14px; }
+.zugang code { font: 700 15px ui-monospace, Menlo, monospace; }

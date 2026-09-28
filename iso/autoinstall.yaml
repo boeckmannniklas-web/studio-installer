@@ -1,0 +1,49 @@
+# Unbeaufsichtigte Installation des Studio-PCs (Ubuntu Desktop 26.04, Subiquity-Autoinstall).
+# baue-iso.sh ersetzt @PASSWORT_HASH@, @SSH_SCHLUESSEL@ und @VERSION@ und legt die Datei als
+# /autoinstall.yaml ins ISO. Der GRUB-Eintrag „Studio-PC installieren“ startet mit `autoinstall`.
+autoinstall:
+  version: 1
+  locale: de_DE.UTF-8
+  keyboard:
+    layout: de
+  timezone: Europe/Berlin
+  identity:
+    realname: Studio
+    username: studio
+    hostname: studio-edge
+    # Anfangspasswort (README); der Einrichtungs-Assistent verlangt als ersten Schritt ein neues.
+    password: "@PASSWORT_HASH@"
+  ssh:
+    install-server: true
+    allow-pw: false
+    authorized-keys: @SSH_SCHLUESSEL@
+  storage:
+    layout:
+      name: lvm
+  updates: all
+  codecs:
+    install: false
+  drivers:
+    install: true
+  packages:
+    - curl
+    - ca-certificates
+    - python3-cryptography
+    - libnotify-bin
+  late-commands:
+    # Studio-Installer aus dem ISO (braucht für seine Abhängigkeiten meist das Netz)
+    - cp /cdrom/studio/studio-installer.deb /target/tmp/studio-installer.deb
+    - curtin in-target --target=/target -- sh -c 'apt-get install -y /tmp/studio-installer.deb || dpkg -i /tmp/studio-installer.deb || true'
+    - rm -f /target/tmp/studio-installer.deb
+    - echo "@VERSION@" > /target/etc/studio-os
+    # Automatisch als studio anmelden – der PC ist die Kasse
+    - printf '[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=studio\n\n[security]\n\n[xdmcp]\n\n[chooser]\n\n[debug]\n' > /target/etc/gdm3/custom.conf
+    # GNOME-Ersteinrichtung überspringen
+    - mkdir -p /target/home/studio/.config && echo yes > /target/home/studio/.config/gnome-initial-setup-done
+    - curtin in-target --target=/target -- chown -R studio:studio /home/studio/.config
+    # Keine Bildschirmsperre, kein Ruhezustand – die Kasse muss wach bleiben
+    - mkdir -p /target/etc/dconf/profile /target/etc/dconf/db/local.d
+    - printf 'user-db:user\nsystem-db:local\n' > /target/etc/dconf/profile/user
+    - printf "[org/gnome/desktop/screensaver]\nlock-enabled=false\n\n[org/gnome/desktop/session]\nidle-delay=uint32 0\n\n[org/gnome/settings-daemon/plugins/power]\nsleep-inactive-ac-type='nothing'\nsleep-inactive-battery-type='nothing'\n" > /target/etc/dconf/db/local.d/00-studio
+    - curtin in-target --target=/target -- dconf update
+  shutdown: reboot
