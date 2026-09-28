@@ -12,7 +12,9 @@ if [ "$1" = "configure" ]; then
     systemctl daemon-reload
     # Bereits eingerichtet: der Assistent bleibt aus, bis ihn jemand mit studio-einrichtung holt.
     if [ ! -f /opt/studio/installiert.json ]; then
-      systemctl enable --now studio-setup.service || true
+      systemctl enable studio-setup.service || true
+      # restart statt start: nach einem Update soll der neue Code laufen
+      systemctl restart studio-setup.service || true
     else
       systemctl try-restart studio-setup.service || true
     fi
