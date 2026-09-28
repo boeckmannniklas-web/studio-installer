@@ -26,7 +26,8 @@ Alternativ das Paket `studio-installer.deb` aus den
 ## Studio-Image
 
 Das Image ist das offizielle Ubuntu 26.04 LTS Desktop mit Studio-Installer und automatischer
-Installation.
+Installation. Download: <https://ki-sunlounge.de/downloads/studio-os-latest.iso>
+(etwa 6,5 GB; Prüfsummen unter <https://ki-sunlounge.de/downloads/>).
 
 1. Das Image auf einen USB-Stick schreiben, z. B. mit Ubuntu „Laufwerke“, balenaEtcher oder Rufus im DD-Modus.
 2. Den PC vom Stick starten und den Eintrag **„Studio-PC installieren – LÖSCHT die gesamte Festplatte“**
@@ -35,7 +36,7 @@ Installation.
 3. Der PC startet neu und meldet sich automatisch als `studio` an.
    Das Anfangspasswort lautet `studio-start`. Der Assistent verlangt als ersten Schritt ein neues.
 
-Das Image selbst baut `iso/baue-iso.sh`.
+Das Image selbst baut `iso/baue-iso.sh`; `iso/veroeffentlichen.sh` legt es auf den Download-Server.
 
 ## Der Assistent
 

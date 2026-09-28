@@ -30,7 +30,7 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq python3-cryptography shellcheck lintian >/dev/null
           python3 -m py_compile paket/opt/studio-installer/*.py
           python3 -m unittest discover -s test -v
-          shellcheck -S warning install.sh baue-deb.sh iso/baue-iso.sh test/vm-test.sh \
+          shellcheck -S warning install.sh baue-deb.sh iso/baue-iso.sh iso/veroeffentlichen.sh test/vm-test.sh \
             paket/usr/bin/studio paket/usr/bin/studio-einrichtung paket/usr/lib/studio-installer/schreibtisch.sh
 
       - name: .deb bauen
