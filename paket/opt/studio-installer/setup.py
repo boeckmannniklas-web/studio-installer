@@ -191,6 +191,17 @@ class Handler(BaseHTTPRequestHandler):
             typ += "; charset=utf-8"
         self._senden(200, datei.read_bytes(), typ)
 
+    def do_HEAD(self):
+        # xdg-open/gio fragt vorab per HEAD, was hinter der Adresse steckt. Nur Kopfzeilen,
+        # kein Token einlösen, keine Inhalte.
+        if self.headers.get("Host", "") not in ERLAUBTE_HOSTS:
+            self.send_response(421)
+        else:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_POST(self):
         if not self._vorab() or not self._api_ok():
             return

@@ -1,0 +1,13 @@
+[Unit]
+Description=Studio-Icon auf den Schreibtisch und ins Dock legen (einmal je Benutzer)
+# Über die grafische Sitzung statt über XDG-Autostart: den startet GNOME nicht, solange
+# ein Ersteinrichtungs-Assistent läuft, und neuere Versionen nur noch eingeschränkt.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/studio-installer/schreibtisch.sh
+
+[Install]
+WantedBy=graphical-session.target

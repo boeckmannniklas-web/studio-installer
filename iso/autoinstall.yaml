@@ -38,9 +38,9 @@ autoinstall:
     - echo "@VERSION@" > /target/etc/studio-os
     # Automatisch als studio anmelden – der PC ist die Kasse
     - printf '[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=studio\n\n[security]\n\n[xdmcp]\n\n[chooser]\n\n[debug]\n' > /target/etc/gdm3/custom.conf
-    # GNOME-Ersteinrichtung überspringen
-    - mkdir -p /target/home/studio/.config && echo yes > /target/home/studio/.config/gnome-initial-setup-done
-    - curtin in-target --target=/target -- chown -R studio:studio /home/studio/.config
+    # Keinen Ubuntu-Willkommensassistenten: solange er offen ist, startet GNOME keine
+    # Autostart-Einträge – auch nicht den, der das Studio-Icon auf den Schreibtisch legt.
+    - curtin in-target --target=/target -- apt-get purge -y gnome-initial-setup
     # Keine Bildschirmsperre, kein Ruhezustand – die Kasse muss wach bleiben
     - mkdir -p /target/etc/dconf/profile /target/etc/dconf/db/local.d
     - printf 'user-db:user\nsystem-db:local\n' > /target/etc/dconf/profile/user

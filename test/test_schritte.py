@@ -91,7 +91,8 @@ class KonfigurationTest(MitSandbox):
                                           "marke": "TESTSTUDIO", "akzent": "No.1"})
         env = schritte.env_lesen((schritte.ZIEL / ".env").read_text())
         self.assertEqual(env["COMPOSE_PROFILES"], "geraetenetz,fernwartung")
-        self.assertEqual(env["TAILSCALE_AUTH_KEY"], "tskey-auth-plattform-123456")
+        # Den Schlüssel der Plattform holt erst die Installation.
+        self.assertEqual(env["TAILSCALE_AUTH_KEY"], "")
         self.assertEqual(env["SYNC_TOKEN"], "studio_edge_x_geheim")
         self.assertEqual(env["EDGE_TENANT_ID"], "0f0e0d0c-0b0a-4000-8000-000000000001")
         self.assertEqual(env["QR_TUER_SERVER_IP"], "192.168.178.20")

@@ -288,8 +288,9 @@ def fernwartung_waehlen(wahl: str, eigener_schluessel: str = "", geraetename: st
     a = _aktivierung()
     if wahl == "plattform":
         if not a.get("tailscale_verfuegbar"):
-            raise Fehler("Die Plattform hat keinen Tailscale-Schlüssel hinterlegt.")
-        schluessel = a["tailscale_authkey"]
+            raise Fehler("Die Plattform bietet keine Fernwartung über Tailscale an.")
+        # Den Einmal-Schlüssel holt installieren() erst direkt vor dem Start – er gilt nur kurz.
+        schluessel = ""
     elif wahl == "eigen":
         schluessel = eigener_schluessel.strip()
         if not TS_SCHLUESSEL.match(schluessel):
@@ -554,6 +555,13 @@ def installieren(log) -> dict:
         raise Fehler(f"Im Image steckt kein passendes Edge-Paket (gefunden: {drin or 'nichts'}).")
 
     env_setzen({"STUDIO_API_IMAGE": "studio-api", "STUDIO_WEB_IMAGE": "studio-web", "STUDIO_VERSION": version})
+    if f["wahl"] == "plattform":
+        try:
+            ts = _anfrage("POST", "/api/v1/install/tailscale", token=a["install_token"])
+            env_setzen({"TAILSCALE_AUTH_KEY": ts["authkey"]})
+            log("Schlüssel für die Fernwartung von der Plattform erhalten.")
+        except Fehler as exc:
+            log(f"WARNUNG: Kein Schlüssel für die Fernwartung ({exc}). Studio startet trotzdem.")
     log("Studio starten …")
     _ausfuehren(_compose("up", "-d", "--no-build", "--remove-orphans"), log, cwd=ZIEL)
 

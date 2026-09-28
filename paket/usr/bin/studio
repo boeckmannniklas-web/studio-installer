@@ -1,7 +1,21 @@
 #!/bin/sh
 # Studio-Icon: nach der Einrichtung die Kasse öffnen, vorher den Einrichtungs-Assistenten.
+# Adresse im Standard-Browser öffnen. Nicht über xdg-open: das lädt eine http-Adresse unter
+# GNOME per gvfs und öffnet sie womöglich im Texteditor.
+oeffnen() {
+  BROWSER=$(xdg-settings get default-web-browser 2>/dev/null || true)
+  if [ -n "$BROWSER" ] && command -v gtk-launch >/dev/null 2>&1; then
+    gtk-launch "$BROWSER" "$1" && return 0
+  fi
+  if command -v firefox >/dev/null 2>&1; then
+    firefox --new-window "$1" && return 0
+  fi
+  xdg-open "$1"
+}
+
 if [ -f /opt/studio/installiert.json ]; then
-  exec xdg-open http://localhost/
+  oeffnen http://localhost/
+  exit 0
 fi
 TOKEN_DATEI=/run/studio-setup/token
 if [ ! -r "$TOKEN_DATEI" ]; then
@@ -15,4 +29,4 @@ if [ ! -r "$TOKEN_DATEI" ]; then
     || echo "Die Einrichtung lässt sich nur mit einem Administrator-Konto starten." >&2
   exit 1
 fi
-exec xdg-open "http://127.0.0.1:8099/?t=$(cat "$TOKEN_DATEI")"
+oeffnen "http://127.0.0.1:8099/?t=$(cat "$TOKEN_DATEI")"

@@ -1,7 +1,20 @@
 #!/bin/sh
 # Einrichtungs-Assistent erneut öffnen, auch wenn Studio schon installiert ist
 # (z. B. Fernwartung nachträglich ändern). Braucht ein Administrator-Konto.
+# Adresse im Standard-Browser öffnen. Nicht über xdg-open: das lädt eine http-Adresse unter
+# GNOME per gvfs und öffnet sie womöglich im Texteditor.
+oeffnen() {
+  BROWSER=$(xdg-settings get default-web-browser 2>/dev/null || true)
+  if [ -n "$BROWSER" ] && command -v gtk-launch >/dev/null 2>&1; then
+    gtk-launch "$BROWSER" "$1" && return 0
+  fi
+  if command -v firefox >/dev/null 2>&1; then
+    firefox --new-window "$1" && return 0
+  fi
+  xdg-open "$1"
+}
+
 pkexec /bin/systemctl start studio-setup.service || exit 1
 i=0
 while [ ! -r /run/studio-setup/token ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-exec xdg-open "http://127.0.0.1:8099/?t=$(cat /run/studio-setup/token)"
+oeffnen "http://127.0.0.1:8099/?t=$(cat /run/studio-setup/token)"
