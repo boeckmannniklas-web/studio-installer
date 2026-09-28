@@ -35,6 +35,8 @@ let umfrage = null;        // Timer der Protokoll-Abfrage
 
 function erledigt(id) {
   if (!stand) return false;
+  // Nach der Installation sind die Zwischenstände gelöscht – dann ist schlicht alles erledigt.
+  if (stand.installiert) return true;
   switch (id) {
     case 'passwort': return stand.passwort_gesetzt;
     case 'internet': return internetOk;
