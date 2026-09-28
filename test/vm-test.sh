@@ -29,12 +29,13 @@ if len(sys.argv) > 3: cmd["arguments"] = json.loads(sys.argv[3])
 f.write(json.dumps(cmd) + "\n"); f.flush(); print(f.readline().strip())
 PY
 }
+erste_datei() { for f in "$@"; do [ -f "$f" ] && { echo "$f"; return 0; }; done; return 1; }
 laeuft() { [ -f "$VM/qemu.pid" ] && kill -0 "$(cat "$VM/qemu.pid")" 2>/dev/null; }
 
 starten() {
   local cdrom=("$@")
-  OVMF_CODE=$(ls /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd 2>/dev/null | head -1)
-  [ -n "$OVMF_CODE" ] || { echo "OVMF fehlt: sudo apt install ovmf" >&2; exit 1; }
+  OVMF_CODE=$(erste_datei /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd) \
+    || { echo "OVMF fehlt: sudo apt install ovmf" >&2; exit 1; }
   qemu-system-x86_64 -enable-kvm -machine q35 -cpu host -smp 4 -m 6144 \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$VM/OVMF_VARS.fd" \
@@ -53,7 +54,7 @@ case "$befehl" in
     laeuft && { echo "läuft schon" >&2; exit 1; }
     mkdir -p "$VM"
     echo "$uuid" > "$VM/uuid"
-    OVMF_VARS=$(ls /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd 2>/dev/null | head -1)
+    OVMF_VARS=$(erste_datei /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd)
     cp "$OVMF_VARS" "$VM/OVMF_VARS.fd"
     rm -f "$VM/platte.qcow2" && qemu-img create -q -f qcow2 "$VM/platte.qcow2" 40G
     starten -cdrom "$iso" -boot order=dc ;;
