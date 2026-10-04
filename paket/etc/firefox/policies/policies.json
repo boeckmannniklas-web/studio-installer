@@ -44,7 +44,7 @@
         "Status": "default"
       },
       "browser.startup.couldRestoreSession.count": {
-        "Value": 99,
+        "Value": -1,
         "Status": "locked"
       },
       "browser.sessionstore.resume_session_once": {
