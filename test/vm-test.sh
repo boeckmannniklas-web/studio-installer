@@ -47,11 +47,10 @@ starten() {
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$VM/OVMF_VARS.fd" \
     -drive file="$VM/platte.qcow2",if=virtio,format=qcow2 \
-    "${zweite[@]}" \
     "${cdrom[@]}" \
     -smbios type=1,uuid="$(cat "$VM/uuid")" \
     -netdev user,id=n0,hostfwd=tcp:127.0.0.1:"$SSH_PORT"-:22 -device virtio-net-pci,netdev=n0 \
-    -device qemu-xhci -device usb-tablet -vga virtio -display none -vnc 127.0.0.1:"$N" \
+    -device qemu-xhci -device usb-tablet "${zweite[@]}" -vga virtio -display none -vnc 127.0.0.1:"$N" \
     -qmp unix:"$VM/qmp.sock",server,nowait -daemonize -pidfile "$VM/qemu.pid"
   echo "VM $name läuft: VNC 127.0.0.1:590$N, SSH -p $SSH_PORT studio@127.0.0.1"
 }
