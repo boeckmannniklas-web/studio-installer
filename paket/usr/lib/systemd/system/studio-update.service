@@ -1,0 +1,10 @@
+[Unit]
+Description=Studio: nach Updates fragen und im Wartungsfenster einspielen
+After=docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/studio/installiert.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/studio-betrieb update-pruefen
+TimeoutStartSec=2h

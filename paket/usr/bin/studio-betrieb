@@ -1,0 +1,4 @@
+#!/bin/sh
+# Sicherung, Updates und Aufträge des Studio-Edge (siehe /opt/studio-installer/betrieb.py).
+#   sudo studio-betrieb sichern | update-pruefen | update [--version X] | status
+exec /usr/bin/python3 /opt/studio-installer/betrieb.py "$@"

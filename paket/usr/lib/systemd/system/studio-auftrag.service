@@ -1,0 +1,8 @@
+[Unit]
+Description=Aufträge aus dem Studio abarbeiten
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/studio-betrieb auftraege
+TimeoutStartSec=3h

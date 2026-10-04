@@ -1,0 +1,12 @@
+[Unit]
+Description=Studio sichern (Datenbank, Dateien, Konfiguration – verschlüsselt)
+After=docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/studio/installiert.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/studio-betrieb sichern --anlass nacht
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=3h

@@ -1,0 +1,10 @@
+[Unit]
+Description=Aufträge aus dem Studio (Sicherung, Updates) abholen
+
+[Path]
+PathExistsGlob=/var/lib/studio-austausch/anforderung/*.json
+MakeDirectory=true
+DirectoryMode=0750
+
+[Install]
+WantedBy=paths.target

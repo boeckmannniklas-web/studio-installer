@@ -1,0 +1,10 @@
+[Unit]
+Description=Studio alle 30 Minuten nach Updates fragen
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

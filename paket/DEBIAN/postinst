@@ -7,6 +7,8 @@ if [ "$1" = "configure" ]; then
   command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications || true
   # Icon für jeden Benutzer bei seiner nächsten Anmeldung (auch im chroot des Image-Installers)
   systemctl --global enable studio-schreibtisch.service >/dev/null 2>&1 || true
+  # Nach der Anmeldung Studio im Kioskmodus öffnen (die Unit prüft selbst auf das Studio-Image)
+  systemctl --global enable studio-kiosk.service >/dev/null 2>&1 || true
   command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
   if [ -d /run/systemd/system ]; then
     systemctl daemon-reload
@@ -17,6 +19,9 @@ if [ "$1" = "configure" ]; then
       systemctl restart studio-setup.service || true
     else
       systemctl try-restart studio-setup.service || true
+      # Eingerichtete Studios: Austauschordner nachrüsten, Sicherung und Updates einschalten.
+      /usr/bin/studio-betrieb nachruesten || true
+      systemctl enable --now studio-sicherung.timer studio-update.timer studio-auftrag.path || true
     fi
   else
     # Im Installer des Studio-Images (chroot): nur einschalten, gestartet wird beim ersten Boot.

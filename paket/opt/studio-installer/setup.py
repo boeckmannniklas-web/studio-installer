@@ -29,7 +29,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import betrieb  # noqa: E402
 import schritte  # noqa: E402
+import speicher  # noqa: E402
 
 ADRESSE, PORT = "127.0.0.1", 8099
 WEB = Path(__file__).resolve().parent / "web"
@@ -112,9 +114,25 @@ def status() -> dict:
         "fernwartung": (lambda f: {"wahl": f.get("wahl"), "name": f.get("name")} if f else None)(
             schritte._zustand_lesen("fernwartung.json")),
         "konfiguration": (schritte.ZIEL / ".env").exists() and a is not None,
+        "speicher": speicher_status(),
         "installiert": schritte.installiert(),
         "auftrag": AUFTRAG.stand(10**9),  # nur der Kopf, keine Zeilen
         "cloud": schritte.CLOUD,
+    }
+
+
+def speicher_status() -> dict:
+    sich = speicher.sicherung_config()
+    return {
+        "daten": speicher.speicher_stand(),
+        "ziel": speicher.backup_ziel_stand() if "ziel" in sich else None,
+        "schluessel": bool(sich.get("oeffentlicher_schluessel")),
+        "fingerabdruck": betrieb._fingerabdruck(sich["oeffentlicher_schluessel"])
+        if sich.get("oeffentlicher_schluessel") else None,
+        "blatt": bool(schritte.WIEDERHERSTELLUNGSBLATT),
+        "wiederherstellung": (lambda w: {"wahl": w.get("wahl"), "manifest": w.get("manifest")} if w else None)(
+            schritte._zustand_lesen("wiederherstellung.json")),
+        "updates": betrieb.updates_config(),
     }
 
 
@@ -233,6 +251,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"zugang": schritte.anmeldedaten()})
             if url.path == "/api/hardware":
                 return self._json(200, {"hardware_id": schritte.hardware_id()})
+            if url.path == "/api/platten":
+                return self._json(200, {"platten": speicher.platten(), "bestand": speicher.bestand_vorhanden()})
+            if url.path == "/api/sicherung/blatt":
+                return self._json(200, {"blatt": schritte.wiederherstellungsblatt()})
+            if url.path == "/api/sicherungen":
+                return self._json(200, schritte.sicherungen_auflisten())
             self._json(404, {"detail": "Unbekannt."})
         except schritte.Fehler as exc:
             self._json(422, {"detail": str(exc)})
@@ -256,6 +280,22 @@ class Handler(BaseHTTPRequestHandler):
                                                 str(d.get("name", "")))
         if pfad == "/api/konfiguration":
             return schritte.konfiguration_speichern(d)
+        if pfad == "/api/speicher/daten":
+            AUFTRAG.starten("Datenspeicher einrichten", lambda log: speicher.datenspeicher_waehlen(d, log))
+            return {"gestartet": True}
+        if pfad == "/api/speicher/ziel/testen":
+            AUFTRAG.starten("Backup-Ziel testen", lambda log: speicher.backup_ziel_testen(d, log))
+            return {"gestartet": True}
+        if pfad == "/api/speicher/ziel":
+            AUFTRAG.starten("Backup-Ziel einrichten", lambda log: speicher.backup_ziel_speichern(d, log))
+            return {"gestartet": True}
+        if pfad == "/api/sicherung/schluessel":
+            return schritte.sicherungsschluessel_einrichten()
+        if pfad == "/api/wiederherstellung/neu":
+            return schritte.neu_beginnen()
+        if pfad == "/api/wiederherstellung/laden":
+            AUFTRAG.starten("Sicherung laden", lambda log: schritte.sicherung_laden(d, log))
+            return {"gestartet": True}
         if pfad == "/api/installieren":
             AUFTRAG.starten("Studio installieren", schritte.installieren)
             return {"gestartet": True}

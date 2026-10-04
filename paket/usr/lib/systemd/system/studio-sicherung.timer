@@ -1,0 +1,11 @@
+[Unit]
+Description=Studio jede Nacht sichern
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=20min
+# War der PC nachts aus, beim nächsten Start nachholen.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

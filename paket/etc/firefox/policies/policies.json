@@ -1,0 +1,33 @@
+{
+  "policies": {
+    "DisableTelemetry": true,
+    "DisableFirefoxStudies": true,
+    "DisablePocket": true,
+    "DisableProfileImport": true,
+    "DisableSetDesktopBackground": true,
+    "DontCheckDefaultBrowser": true,
+    "NoDefaultBookmarks": true,
+    "OfferToSaveLogins": false,
+    "PasswordManagerEnabled": false,
+    "OverrideFirstRunPage": "",
+    "OverridePostUpdatePage": "",
+    "TranslateEnabled": false,
+    "UserMessaging": {
+      "WhatsNew": false,
+      "ExtensionRecommendations": false,
+      "FeatureRecommendations": false,
+      "UrlbarInterventions": false,
+      "SkipOnboarding": true,
+      "MoreFromMozilla": false,
+      "FirefoxLabs": false,
+      "Locked": true
+    },
+    "Preferences": {
+      "browser.sessionstore.resume_from_crash": { "Value": false, "Status": "default" },
+      "browser.aboutwelcome.enabled": { "Value": false, "Status": "default" },
+      "datareporting.policy.dataSubmissionPolicyBypassNotification": { "Value": true, "Status": "default" },
+      "browser.tabs.warnOnClose": { "Value": false, "Status": "default" },
+      "browser.shell.checkDefaultBrowser": { "Value": false, "Status": "default" }
+    }
+  }
+}

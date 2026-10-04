@@ -9,6 +9,9 @@
 #   test/vm-test.sh zurueck <name> <stand>       Platte zurückspielen
 #   test/vm-test.sh ssh    <name> [befehl]       per SSH in die VM (Schlüssel aus dem --test-ISO)
 #
+# ZWEITE_PLATTE=1: eine zweite virtuelle Platte (20 GB, USB) – zum Testen von „Eigene Platte“
+# und „USB-Platte als Backup-Ziel“ im Schritt Speicher & Sicherung.
+#
 # Jede VM bekommt eine feste SMBIOS-UUID – daraus bildet der Installer die Hardware-ID. Zwei
 # VMs mit verschiedenen UUIDs sind für die Cloud zwei verschiedene PCs.
 # Bildschirm: VNC auf 127.0.0.1:590<n> (in VS Code den Port weiterleiten), SSH auf 127.0.0.1:22<n>2.
@@ -33,13 +36,18 @@ erste_datei() { for f in "$@"; do [ -f "$f" ] && { echo "$f"; return 0; }; done;
 laeuft() { [ -f "$VM/qemu.pid" ] && kill -0 "$(cat "$VM/qemu.pid")" 2>/dev/null; }
 
 starten() {
-  local cdrom=("$@")
+  local cdrom=("$@") zweite=()
+  if [ "${ZWEITE_PLATTE:-}" = 1 ]; then
+    [ -f "$VM/zweite.qcow2" ] || qemu-img create -q -f qcow2 "$VM/zweite.qcow2" 20G
+    zweite=(-drive "file=$VM/zweite.qcow2,if=none,id=zweite,format=qcow2" -device "usb-storage,drive=zweite,serial=STUDIOUSB1")
+  fi
   OVMF_CODE=$(erste_datei /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd) \
     || { echo "OVMF fehlt: sudo apt install ovmf" >&2; exit 1; }
   qemu-system-x86_64 -enable-kvm -machine q35 -cpu host -smp 4 -m 6144 \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$VM/OVMF_VARS.fd" \
     -drive file="$VM/platte.qcow2",if=virtio,format=qcow2 \
+    "${zweite[@]}" \
     "${cdrom[@]}" \
     -smbios type=1,uuid="$(cat "$VM/uuid")" \
     -netdev user,id=n0,hostfwd=tcp:127.0.0.1:"$SSH_PORT"-:22 -device virtio-net-pci,netdev=n0 \

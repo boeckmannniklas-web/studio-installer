@@ -1,20 +1,22 @@
 #!/bin/sh
-# Studio-Icon: nach der Einrichtung die Kasse öffnen, vorher den Einrichtungs-Assistenten.
-# Adresse im Standard-Browser öffnen. Nicht über xdg-open: das lädt eine http-Adresse unter
-# GNOME per gvfs und öffnet sie womöglich im Texteditor.
-oeffnen() {
-  BROWSER=$(xdg-settings get default-web-browser 2>/dev/null || true)
-  if [ -n "$BROWSER" ] && command -v gtk-launch >/dev/null 2>&1; then
-    gtk-launch "$BROWSER" "$1" && return 0
-  fi
-  if command -v firefox >/dev/null 2>&1; then
-    firefox --new-window "$1" && return 0
-  fi
-  xdg-open "$1"
-}
+# Studio-Icon: nach der Einrichtung die Kasse öffnen, vorher den Einrichtungs-Assistenten –
+# beides im Kioskmodus (Vollbild ohne Adressleiste, siehe kiosk.sh).
+. /usr/lib/studio-installer/kiosk.sh
 
 if [ -f /opt/studio/installiert.json ]; then
-  oeffnen http://localhost/
+  # Nach dem Hochfahren braucht Studio etwas. Im Kiosk gibt es keinen Neu-laden-Knopf –
+  # also erst öffnen, wenn es antwortet, statt eine Fehlerseite stehen zu lassen.
+  i=0
+  until curl -fs -o /dev/null --max-time 3 http://localhost/api/v1/health; do
+    [ $i -eq 2 ] && meldung "Studio startet … einen Moment bitte."
+    i=$((i + 1))
+    if [ $i -gt 90 ]; then
+      meldung "Studio antwortet nicht. Bitte den PC neu starten oder den Support anrufen."
+      break
+    fi
+    sleep 2
+  done
+  kiosk_oeffnen http://localhost/
   exit 0
 fi
 TOKEN_DATEI=/run/studio-setup/token
@@ -25,8 +27,7 @@ if [ ! -r "$TOKEN_DATEI" ]; then
   while [ ! -r "$TOKEN_DATEI" ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
 fi
 if [ ! -r "$TOKEN_DATEI" ]; then
-  notify-send "Studio" "Die Einrichtung lässt sich nur mit einem Administrator-Konto starten." 2>/dev/null \
-    || echo "Die Einrichtung lässt sich nur mit einem Administrator-Konto starten." >&2
+  meldung "Die Einrichtung lässt sich nur mit einem Administrator-Konto starten."
   exit 1
 fi
-oeffnen "http://127.0.0.1:8099/?t=$(cat "$TOKEN_DATEI")"
+kiosk_oeffnen "http://127.0.0.1:8099/?t=$(cat "$TOKEN_DATEI")"

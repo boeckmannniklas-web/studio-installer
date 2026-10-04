@@ -31,7 +31,8 @@ jobs:
           python3 -m py_compile paket/opt/studio-installer/*.py
           python3 -m unittest discover -s test -v
           shellcheck -S warning install.sh baue-deb.sh iso/baue-iso.sh iso/veroeffentlichen.sh test/vm-test.sh \
-            paket/usr/bin/studio paket/usr/bin/studio-einrichtung paket/usr/lib/studio-installer/schreibtisch.sh
+            paket/usr/bin/studio paket/usr/bin/studio-einrichtung paket/usr/bin/studio-betrieb \
+            paket/usr/lib/studio-installer/schreibtisch.sh paket/usr/lib/studio-installer/kiosk.sh
 
       - name: .deb bauen
         run: |
@@ -44,7 +45,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           V="${TAG#v}"
-          DATEIEN=(dist/studio-installer.deb "dist/studio-installer_${V}_all.deb" install.sh)
+          # Prüfsummen: studio-betrieb holt damit Updates dieses Pakets (betrieb.installer_aktualisieren).
+          (cd dist && sha256sum "studio-installer_${V}_all.deb" studio-installer.deb > SHA256SUMS)
+          DATEIEN=(dist/studio-installer.deb "dist/studio-installer_${V}_all.deb" dist/SHA256SUMS install.sh)
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${DATEIEN[@]}" --clobber
           else

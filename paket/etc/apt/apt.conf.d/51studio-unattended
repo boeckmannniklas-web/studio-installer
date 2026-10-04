@@ -1,0 +1,11 @@
+// Studio-Installer: Sicherheitsupdates des Betriebssystems automatisch.
+// Den Neustart (falls nötig) legt studio-betrieb ins Wartungsfenster (52studio-unattended-reboot).
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+Unattended-Upgrade::Allowed-Origins {
+        "${distro_id}:${distro_codename}-security";
+        "${distro_id}ESMApps:${distro_codename}-apps-security";
+        "${distro_id}ESM:${distro_codename}-infra-security";
+};
+// Docker nie nebenbei aktualisieren: ein Neustart des Dienstes hält die Kasse an.
+Unattended-Upgrade::Package-Blacklist { "docker-ce"; "docker-ce-cli"; "containerd.io"; "docker.io"; };

@@ -7,8 +7,11 @@ Reihenfolge wie im Wizard:
   3. docker_installieren  Docker Engine + Compose aus dem Docker-Repo (sonst Ubuntu-Pakete)
   4. aktivieren           Lizenzschlüssel prüfen, bei der Cloud aktivieren (bindet die Hardware)
   5. fernwartung_waehlen  Tailscale der Plattform, eigener Schlüssel oder keine Fernwartung
-  6. konfiguration_*      .env aus der Cloud holen oder im Wizard erzeugen, ablegen, an die Cloud schicken
-  7. installieren         signiertes Manifest prüfen, Images ziehen, Edge-Paket auspacken, starten
+  6. konfiguration_*      .env aus der Cloud holen oder im Wizard erzeugen, ablegen, an die Cloud schicken;
+                          dazu Updates (automatisch/manuell, Wartungsfenster)
+  7. speicher (speicher.py) Datenspeicher, Backup-Ziel, Sicherungsschlüssel, ggf. Wiederherstellung
+  8. installieren         signiertes Manifest prüfen, Images ziehen, Edge-Paket auspacken, ggf.
+                          Sicherung einspielen, starten, Sicherung und Updates einschalten
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ CLOUD = os.environ.get("STUDIO_CLOUD", "https://ki-sunlounge.de").rstrip("/")
 HIER = Path(__file__).resolve().parent
 ZIEL = Path(os.environ.get("STUDIO_ZIEL", "/opt/studio"))
 ZUSTAND = Path(os.environ.get("STUDIO_ZUSTAND", "/var/lib/studio-installer"))
-PROJEKT = "studio-edge"
+PROJEKT = os.environ.get("STUDIO_PROJEKT", "studio-edge")
 PC_BENUTZER = "studio"
 
 #: Das Studio-Image setzt diese Marke (iso/autoinstall.yaml). Nur dann gibt es den Passwortschritt.
@@ -197,8 +200,9 @@ def docker_installieren(log) -> None:
         _ausfuehren(["curl", "-fsSL", "https://download.docker.com/linux/ubuntu/gpg",
                      "-o", "/etc/apt/keyrings/docker.asc"], log)
         os.chmod("/etc/apt/keyrings/docker.asc", 0o644)
+        arch = _ausfuehren(["dpkg", "--print-architecture"]).strip() or "amd64"
         Path("/etc/apt/sources.list.d/docker.list").write_text(
-            f"deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] "
+            f"deb [arch={arch} signed-by=/etc/apt/keyrings/docker.asc] "
             f"https://download.docker.com/linux/ubuntu {codename} stable\n")
         _ausfuehren(["apt-get", "update"], log)
         _ausfuehren(["apt-get", "install", "-y", "docker-ce", "docker-ce-cli", "containerd.io",
@@ -427,11 +431,21 @@ def konfiguration_speichern(eingaben: dict) -> dict:
     profile = [p for p, an in (("geraetenetz", werte.pop("_GERAETENETZ")), ("fernwartung", f["wahl"] != "aus")) if an]
     werte["COMPOSE_PROFILES"] = ",".join(profile)
 
+    _updates_aus_eingaben(eingaben)
     text = env_text(werte)
     _sicher_schreiben(ZIEL / ".env", text)
     _anfrage("PUT", "/api/v1/install/konfiguration", token=a["install_token"],
              daten={"env": text, "fernwartung": f["wahl"]})
     return {"gespeichert": True, "aus_cloud": bool(cloud)}
+
+
+def _updates_aus_eingaben(eingaben: dict) -> None:
+    """Updates automatisch (Standard) oder manuell – der SystemOwner kann das später im
+    Studio umstellen (Grundeinstellungen → Updates)."""
+    import betrieb
+    u = eingaben.get("updates") or {}
+    betrieb.updates_einstellen(u.get("modus") or "automatisch", u.get("fenster_von") or None,
+                               u.get("fenster_bis") or None)
 
 
 GRUPPEN = (
@@ -475,8 +489,11 @@ def env_setzen(aenderungen: dict[str, str | None]) -> None:
 
 # ── 7. Installieren ───────────────────────────────────────────────────────────
 def _compose(*args: str) -> list[str]:
-    return ["docker", "compose", "-p", PROJEKT, "-f", str(ZIEL / "compose.yml"),
-            "--env-file", str(ZIEL / ".env"), *args]
+    dateien = ["-f", str(ZIEL / "compose.yml")]
+    # Ergänzung des Installers: Datenspeicher und Austauschordner (speicher.py)
+    if (ZIEL / "compose.lokal.yml").exists():
+        dateien += ["-f", str(ZIEL / "compose.lokal.yml")]
+    return ["docker", "compose", "-p", PROJEKT, *dateien, "--env-file", str(ZIEL / ".env"), *args]
 
 
 def _manifest(log) -> tuple[dict, dict]:
@@ -525,12 +542,24 @@ asyncio.run(m())
 
 
 def installieren(log) -> dict:
+    import betrieb
+    import speicher
     a = _aktivierung()
     f = _fernwartung()
     if not (ZIEL / ".env").exists():
         raise Fehler("Erst die Konfiguration speichern.")
+    if not speicher.speicher_stand()["festgelegt"]:
+        raise Fehler("Erst den Datenspeicher wählen (Schritt Speicher & Sicherung).")
+    wahl = _zustand_lesen("wiederherstellung.json")
+    if wahl.get("wahl") not in ("neu", "sicherung"):
+        raise Fehler("Erst wählen: neu beginnen oder aus einer Sicherung wiederherstellen.")
     manifest, registry = _manifest(log)
     version = manifest["version"]
+    if wahl["wahl"] == "sicherung":
+        alt = (wahl.get("manifest") or {}).get("version") or "0"
+        if betrieb._versionsschluessel(alt) > betrieb._versionsschluessel(version):
+            raise Fehler(f"Die Sicherung stammt von Version {alt}, freigegeben ist erst {version}. "
+                         "Bitte den Plattform-Betreiber ansprechen.")
 
     # Anmeldedaten nur in einem Wegwerf-Ordner – sie landen nie in /root/.docker.
     with tempfile.TemporaryDirectory(prefix="studio-docker-") as konfig:
@@ -555,6 +584,10 @@ def installieren(log) -> dict:
         raise Fehler(f"Im Image steckt kein passendes Edge-Paket (gefunden: {drin or 'nichts'}).")
 
     env_setzen({"STUDIO_API_IMAGE": "studio-api", "STUDIO_WEB_IMAGE": "studio-web", "STUDIO_VERSION": version})
+    speicher.austausch_anlegen()
+    speicher.compose_lokal_schreiben()
+    if wahl["wahl"] == "sicherung":
+        sicherung_einspielen(wahl, log)
     if f["wahl"] == "plattform":
         try:
             ts = _anfrage("POST", "/api/v1/install/tailscale", token=a["install_token"])
@@ -593,14 +626,22 @@ def installieren(log) -> dict:
             log("WARNUNG: Tailscale hat sich nicht angemeldet – Studio läuft trotzdem. "
                 "Schlüssel prüfen (abgelaufen? schon verbraucht?).")
 
+    log("Sicherung und Updates einschalten …")
+    _ausfuehren(["systemctl", "enable", "--now", "studio-sicherung.timer", "studio-update.timer",
+                 "studio-auftrag.path"], log, pruefen=False)
+    betrieb.status_schreiben()
+
     zugang = anmeldedaten()
     ergebnis = {"version": version, "studio": a["tenant_name"], "lizenz_aktiv": bool(lizenz),
                 "fernwartung": f["wahl"], "tailscale": tailscale,
+                "wiederhergestellt": wahl.get("manifest", {}).get("erstellt") if wahl["wahl"] == "sicherung" else None,
                 "installiert_at": datetime.now(timezone.utc).isoformat()}
     _sicher_schreiben(ZIEL / "installiert.json", json.dumps(ergebnis, indent=2), 0o644)
     # Tokens der Aktivierung werden nicht mehr gebraucht; die .env hat, was Studio braucht.
-    for name in ("aktivierung.json", "fernwartung.json", "cloud-env.json"):
+    for name in ("aktivierung.json", "fernwartung.json", "cloud-env.json", "wiederherstellung.json"):
         (ZUSTAND / name).unlink(missing_ok=True)
+    shutil.rmtree(ZUSTAND / "wiederherstellung", ignore_errors=True)
+    WIEDERHERSTELLUNGSBLATT.clear()
     # Der Assistent startet ab jetzt nicht mehr beim Hochfahren; `studio-einrichtung` holt ihn zurück.
     _ausfuehren(["systemctl", "disable", "studio-setup.service"], log, pruefen=False)
     log("Fertig.")
@@ -630,3 +671,191 @@ def installiert() -> dict | None:
         return json.loads((ZIEL / "installiert.json").read_text())
     except (OSError, ValueError):
         return None
+
+
+# ── Sicherungsschlüssel und Wiederherstellung (Schritt „Speicher & Sicherung“) ──
+#: Das Wiederherstellungsblatt nur im Speicher dieses Dienstes – bis die Einrichtung fertig
+#: ist, kann man es erneut anzeigen und drucken. Auf der Platte liegt der private Schlüssel nie.
+WIEDERHERSTELLUNGSBLATT: dict = {}
+
+
+def sicherungsschluessel_einrichten() -> dict:
+    """Einen Schlüssel je Studio. Hat die Cloud schon einen (frühere Installation), gilt er
+    weiter – das Blatt von damals öffnet auch die alten Sicherungen. Sonst entsteht hier ein
+    neues Paar: der private Teil geht verschlüsselt an die Plattform und einmal aufs Blatt."""
+    import betrieb
+    import speicher
+    a = _aktivierung()
+    stand = _anfrage("GET", "/api/v1/install/sicherung", token=a["install_token"])
+    if stand.get("oeffentlicher_schluessel"):
+        betrieb.oeffentlichen_schluessel_setzen(stand["oeffentlicher_schluessel"])
+        return {"vorhanden": True, "neu": False, "fingerabdruck": betrieb._fingerabdruck(stand["oeffentlicher_schluessel"])}
+    pub, privat = betrieb.schluessel_erzeugen()
+    _anfrage("POST", "/api/v1/install/sicherung/schluessel", token=a["install_token"],
+             daten={"oeffentlich": pub, "privat": privat})
+    betrieb.oeffentlichen_schluessel_setzen(pub)
+    WIEDERHERSTELLUNGSBLATT.update({"privat": privat, "oeffentlich": pub, "studio": a.get("tenant_name"),
+                                    "erstellt": date.today().strftime("%d.%m.%Y"),
+                                    "fingerabdruck": betrieb._fingerabdruck(pub)})
+    speicher.sicherung_config_schreiben({**speicher.sicherung_config(), "cloud": True})
+    return {"vorhanden": True, "neu": True, "fingerabdruck": betrieb._fingerabdruck(pub)}
+
+
+def wiederherstellungsblatt() -> dict | None:
+    if not WIEDERHERSTELLUNGSBLATT:
+        return None
+    blatt = dict(WIEDERHERSTELLUNGSBLATT)
+    try:
+        import qrcode
+        import qrcode.image.svg
+        bild = qrcode.make(blatt["privat"], image_factory=qrcode.image.svg.SvgPathImage, box_size=8, border=2)
+        blatt["qr_svg"] = bild.to_string(encoding="unicode")
+    except Exception:  # python3-qrcode fehlt: das Blatt geht auch ohne QR-Code
+        blatt["qr_svg"] = None
+    return blatt
+
+
+def sicherungen_auflisten() -> dict:
+    """Sicherungen dieses Studios: in der Cloud und am Backup-Ziel vor Ort."""
+    import speicher
+    a = _aktivierung()
+    stand = _anfrage("GET", "/api/v1/install/sicherung", token=a["install_token"])
+    cloud = [{"quelle": "cloud", **s} for s in stand.get("sicherungen") or []]
+    vor_ort = []
+    if speicher.backup_ziel_stand().get("art") not in (None, "spaeter"):
+        try:
+            for ordner in sorted(p for p in speicher.BACKUP_PFAD.iterdir() if p.is_dir()):
+                for datei in sorted(ordner.glob("studio-*.tar.gz.age"), reverse=True)[:30]:
+                    vor_ort.append({"quelle": "ziel", "id": f"{ordner.name}/{datei.name}", "name": datei.name,
+                                    "groesse": datei.stat().st_size,
+                                    "erstellt": datetime.fromtimestamp(datei.stat().st_mtime, timezone.utc).isoformat()})
+        except OSError:
+            pass
+    return {"cloud": cloud, "vor_ort": vor_ort, "freigabe_aktiv": bool(stand.get("freigabe_aktiv")),
+            "schluessel_vorhanden": bool(stand.get("oeffentlicher_schluessel"))}
+
+
+def neu_beginnen() -> dict:
+    _zustand_schreiben("wiederherstellung.json", {"wahl": "neu"})
+    return {"wahl": "neu"}
+
+
+def sicherung_laden(eingaben: dict, log) -> dict:
+    """Eine Sicherung holen, entschlüsseln und prüfen. Läuft als Auftrag (Download)."""
+    import speicher
+    a = _aktivierung()
+    ordner = ZUSTAND / "wiederherstellung"
+    shutil.rmtree(ordner, ignore_errors=True)
+    ordner.mkdir(parents=True, mode=0o700)
+    quelle, kennung = eingaben.get("quelle"), str(eingaben.get("id") or "")
+    archiv = ordner / "sicherung.tar.gz.age"
+    if quelle == "cloud":
+        if not re.fullmatch(r"[0-9a-f-]{36}", kennung):
+            raise Fehler("Unbekannte Sicherung.")
+        log("Sicherung aus der Cloud laden …")
+        req = urllib.request.Request(f"{CLOUD}/api/v1/install/sicherung/{kennung}", headers={
+            "Authorization": f"Bearer {a['install_token']}", "User-Agent": "studio-installer"})
+        try:
+            with urllib.request.urlopen(req, timeout=600) as antwort, open(archiv, "wb") as aus:
+                shutil.copyfileobj(antwort, aus, 1 << 20)
+        except (urllib.error.URLError, OSError) as exc:
+            raise Fehler(f"Download der Sicherung gescheitert ({exc}).") from exc
+    elif quelle == "ziel":
+        if not re.fullmatch(r"[A-Za-z0-9._-]+/studio-[A-Za-z0-9._-]+\.tar\.gz\.age", kennung):
+            raise Fehler("Unbekannte Sicherung.")
+        datei = speicher.BACKUP_PFAD / kennung
+        if not datei.is_file():
+            raise Fehler("Die Sicherung ist am Backup-Ziel nicht (mehr) da.")
+        log(f"Sicherung vom Backup-Ziel kopieren ({datei.name}) …")
+        shutil.copy2(datei, archiv)
+    else:
+        raise Fehler("Bitte eine Sicherung wählen.")
+
+    privat = "".join((eingaben.get("schluessel") or "").split()).upper()
+    if eingaben.get("plattform"):
+        log("Schlüssel bei der Plattform anfordern …")
+        privat = _anfrage("GET", "/api/v1/install/sicherung/schluessel", token=a["install_token"])["privat"]
+    if not re.fullmatch(r"AGE-SECRET-KEY-1[0-9A-Z]{58}", privat):
+        raise Fehler("Der Schlüssel vom Wiederherstellungsblatt beginnt mit AGE-SECRET-KEY-1 (74 Zeichen).")
+    schluessel = ordner / "schluessel.txt"
+    fd = os.open(schluessel, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(privat + "\n")
+    try:
+        log("Entschlüsseln und auspacken …")
+        entpackt = ordner / "inhalt"
+        entpackt.mkdir(mode=0o700)
+        age = subprocess.Popen(["age", "-d", "-i", str(schluessel), str(archiv)], stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE)
+        tar = subprocess.run(["tar", "-xzf", "-", "-C", str(entpackt)], stdin=age.stdout, capture_output=True)
+        age.stdout.close()
+        age.wait()
+        if age.returncode != 0:
+            raise Fehler("Der Schlüssel passt nicht zu dieser Sicherung.")
+        if tar.returncode != 0:
+            raise Fehler("Die Sicherung ist beschädigt (tar).")
+    finally:
+        schluessel.unlink(missing_ok=True)
+    archiv.unlink(missing_ok=True)
+    try:
+        manifest = json.loads((ordner / "inhalt" / "manifest.json").read_text())
+    except (OSError, ValueError) as exc:
+        raise Fehler("Der Sicherung fehlt das Inhaltsverzeichnis.") from exc
+    for name, soll in (manifest.get("dateien") or {}).items():
+        datei = ordner / "inhalt" / name
+        if not datei.exists() or hashlib.sha256(datei.read_bytes()).hexdigest() != soll["sha256"]:
+            raise Fehler(f"Prüfsumme von {name} stimmt nicht – die Sicherung ist beschädigt.")
+    if manifest.get("tenant_id") and manifest["tenant_id"] != a.get("tenant_id"):
+        raise Fehler("Diese Sicherung gehört zu einem anderen Studio.")
+    log(f"Sicherung vom {manifest.get('erstellt')} (Version {manifest.get('version')}) geprüft.")
+    wahl = {"wahl": "sicherung", "quelle": quelle, "id": kennung, "manifest": manifest}
+    _zustand_schreiben("wiederherstellung.json", wahl)
+    return wahl
+
+
+def sicherung_einspielen(wahl: dict, log) -> None:
+    """Datenbank und Dateien der gewählten Sicherung in die frische Installation einspielen.
+    Danach startet Studio im Wiederherstellungsmodus: die Kasse bleibt gesperrt, bis der
+    Abgleich mit Cloud und TSE fertig ist (Studio → Backup → Wiederherstellung abgleichen)."""
+    import betrieb
+    inhalt = ZUSTAND / "wiederherstellung" / "inhalt"
+    if not (inhalt / "db.dump").exists():
+        raise Fehler("Die geladene Sicherung ist nicht mehr da. Bitte im Schritt Speicher & Sicherung neu laden.")
+    alt_env = env_lesen((inhalt / "konfig" / ".env").read_text()) if (inhalt / "konfig" / ".env").exists() else {}
+    # Verschlüsselte Zugangsdaten in der Datenbank (fiskaly, Mail …) hängen an SECRETS_KEY.
+    env_setzen({k: alt_env[k] for k in ("SECRETS_KEY", "JWT_SECRET_KEY") if alt_env.get(k)})
+    log("Datenbank starten …")
+    _ausfuehren(_compose("up", "-d", "db"), log, cwd=ZIEL)
+    if not _warten(lambda: subprocess.run(_compose("exec", "-T", "db", "pg_isready", "-U", "studio", "-d", "studio"),
+                                          capture_output=True, cwd=ZIEL).returncode == 0, 180, pause=3):
+        raise Fehler("Die Datenbank startet nicht.")
+    leer = _ausfuehren(_compose("exec", "-T", "db", "psql", "-U", "studio", "-d", "studio", "-Atc",
+                                "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'"), cwd=ZIEL).strip()
+    if leer not in ("0", ""):
+        raise Fehler("Die Datenbank auf diesem PC ist nicht leer – eine Sicherung wird nur in eine frische "
+                     "Installation eingespielt.")
+    log("Datenbank aus der Sicherung einspielen …")
+    with open(inhalt / "db.dump", "rb") as ein:
+        proc = subprocess.run(_compose("exec", "-T", "db", "pg_restore", "-U", "studio", "-d", "studio",
+                                       "--no-owner", "--exit-on-error"), stdin=ein, capture_output=True, cwd=ZIEL)
+    if proc.returncode != 0:
+        raise Fehler("Datenbank einspielen fehlgeschlagen: " + proc.stderr.decode(errors="replace")[-300:])
+    log("Dateien aus der Sicherung einspielen …")
+    with open(inhalt / "daten.tar", "rb") as ein:
+        proc = subprocess.run(_compose("run", "--rm", "--no-deps", "-T", "--entrypoint", "tar", "api",
+                                       "-C", "/data", "-xf", "-"), stdin=ein, capture_output=True, cwd=ZIEL)
+    if proc.returncode != 0:
+        raise Fehler("Dateien einspielen fehlgeschlagen: " + proc.stderr.decode(errors="replace")[-300:])
+    m = wahl.get("manifest") or {}
+    marke = {"status": "abgleich_offen", "sicherung_erstellt": m.get("erstellt"), "sicherung_version": m.get("version"),
+             "anlass": m.get("anlass"), "quelle": wahl.get("quelle"), "datei": wahl.get("id"),
+             "kasse": m.get("kasse") or {}, "eingespielt_at": datetime.now(timezone.utc).isoformat(),
+             "rechner_alt": m.get("rechner")}
+    proc = subprocess.run(_compose("run", "--rm", "--no-deps", "-T", "--entrypoint", "sh", "api", "-c",
+                                   "cat > /data/wiederherstellung.json"),
+                          input=json.dumps(marke, indent=2).encode(), capture_output=True, cwd=ZIEL)
+    if proc.returncode != 0:
+        raise Fehler("Die Wiederherstellungsmarke ließ sich nicht schreiben.")
+    log("Sicherung eingespielt. Studio startet im Wiederherstellungsmodus – die Kasse bleibt gesperrt, bis "
+        "der Abgleich mit Cloud und TSE fertig ist.")
+    betrieb.status_schreiben()

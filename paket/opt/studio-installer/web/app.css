@@ -90,3 +90,19 @@ table.werte td { border-top: 1px solid var(--border-soft); padding: 6px 4px; ver
 table.werte td:first-child { font-family: ui-monospace, Menlo, monospace; color: var(--text-2); width: 42%; }
 .zugang { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin-top: 10px; font-size: 14px; }
 .zugang code { font: 700 15px ui-monospace, Menlo, monospace; }
+input[type=time] {
+  width: 100%; font: inherit; color: var(--text); background: var(--surface-muted); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px 12px; outline: none;
+}
+.blatt { margin-top: 14px; border: 2px dashed var(--border); border-radius: 14px; padding: 18px 20px; background: var(--surface); }
+.blatt-kopf { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 15px; }
+.blatt-kopf span { color: var(--text-2); font-size: 12.5px; }
+.blatt-schluessel { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin: 14px 0; }
+.blatt-schluessel code { font: 700 17px/1.7 ui-monospace, Menlo, monospace; letter-spacing: .04em; max-width: 520px; word-break: break-word; }
+.blatt-qr svg { width: 150px; height: 150px; }
+@media print {
+  body { background: #fff; }
+  body * { visibility: hidden; }
+  #blatt-druck, #blatt-druck * { visibility: visible; }
+  #blatt-druck { position: absolute; left: 0; top: 0; width: 100%; border: none; }
+}
