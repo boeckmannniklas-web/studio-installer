@@ -27,6 +27,7 @@ const SCHRITTE = [
   { id: 'speicher', titel: 'Speicher & Sicherung' },
   { id: 'installation', titel: 'Installation' },
   { id: 'fertig', titel: 'Fertig' },
+  { id: 'verwaltung', titel: 'Dieser PC', nurInstalliert: true },
 ];
 
 let stand = null;          // /api/status
@@ -54,11 +55,14 @@ function erledigt(id) {
   }
 }
 
-function sichtbar() { return SCHRITTE.filter((s) => !s.nurImage || stand?.ist_image); }
+function sichtbar() {
+  return SCHRITTE.filter((s) => (!s.nurImage || stand?.ist_image) && (!s.nurInstalliert || stand?.installiert));
+}
 
 function naechster() {
-  if (stand?.installiert) return 'fertig';
-  return (sichtbar().find((s) => s.id !== 'fertig' && !erledigt(s.id)) || { id: 'installation' }).id;
+  // Eingerichtet: Übersicht dieses PCs (Fenster nach Alt+F4 auf der Kasse).
+  if (stand?.installiert) return 'verwaltung';
+  return (sichtbar().find((s) => !['fertig', 'verwaltung'].includes(s.id) && !erledigt(s.id)) || { id: 'installation' }).id;
 }
 
 function erreichbar(id) {
@@ -81,7 +85,7 @@ function seitenleiste() {
   document.querySelectorAll('#schritte li.erreichbar').forEach((li) =>
     li.addEventListener('click', () => {
       // Nach der Installation lässt sich nur noch das Backup-Ziel ändern (Schritt Speicher).
-      if (!stand?.installiert || ['fertig', 'speicher'].includes(li.dataset.schritt)) zeigen(li.dataset.schritt);
+      if (!stand?.installiert || ['fertig', 'speicher', 'verwaltung'].includes(li.dataset.schritt)) zeigen(li.dataset.schritt);
     }));
 }
 
@@ -89,7 +93,7 @@ function zeigen(id) {
   if (umfrage) { clearInterval(umfrage); umfrage = null; }
   aktuell = id;
   seitenleiste();
-  ({ passwort, internet, docker, lizenz, fernwartung, konfiguration, speicher, installation, fertig }[id])();
+  ({ passwort, internet, docker, lizenz, fernwartung, konfiguration, speicher, installation, fertig, verwaltung }[id])();
 }
 
 function fehlerZeigen(e, wo = '#meldung') {
@@ -108,7 +112,7 @@ function knopf(sel, arbeit) {
 }
 
 // ── Protokoll eines Hintergrundauftrags ───────────────────────────────────────
-function protokollVerfolgen(fertig) {
+function protokollVerfolgen(fertig, beiFehler) {
   let seit = 0;
   const pre = $('#protokoll');
   umfrage = setInterval(async () => {
@@ -121,7 +125,7 @@ function protokollVerfolgen(fertig) {
       }
       if (!a.laeuft) {
         clearInterval(umfrage); umfrage = null;
-        if (a.fehler) fehlerZeigen(new Error(a.fehler));
+        if (a.fehler) { fehlerZeigen(new Error(a.fehler)); if (beiFehler) beiFehler(a.fehler); }
         else fertig(a.ergebnis);
       }
     } catch (e) { /* kurz weg – beim nächsten Takt weiter */ }
@@ -611,9 +615,114 @@ async function fertig() {
       <h2>Erste Anmeldung</h2>
       <div class="zugang"><span>Benutzer</span><code>${esc(zugang.benutzer)}</code><span>Startpasswort</span><code>${esc(zugang.passwort)}</code></div>
       <div class="box warnung">Bitte notieren. Beim ersten Anmelden muss das Passwort geändert werden.</div>` : ''}
-    <div class="zeile"><a class="knopf haupt" href="http://localhost/" rel="noreferrer">Studio öffnen</a></div>
-    <p class="caption">Ab jetzt startet der PC direkt mit der Kasse im Vollbild. Alt+F4 schließt das Vollbild,
-      das Studio-Icon auf dem Schreibtisch öffnet es wieder.</p>`;
+    <div class="zeile"><button class="haupt" id="zu-studio">Studio öffnen</button></div>
+    <p class="caption">Ab jetzt startet der PC direkt mit der Kasse im Vollbild. Alt+F4 schließt die Kasse und zeigt
+      die Übersicht dieses PCs, ein zweites Alt+F4 führt zum Schreibtisch. Das Studio-Icon öffnet die Kasse wieder.</p>`;
+  knopf('#zu-studio', zuStudio);
+}
+
+// ── Dieser PC (nach Alt+F4 auf der Kasse) ─────────────────────────────────────
+async function zuStudio() {
+  // Der Kiosk soll nach dem nächsten Alt+F4 wieder hierher kommen (kiosk-schleife.sh).
+  try { await api('/api/kiosk/ansicht', { ansicht: 'studio' }); } catch { /* ohne Schleife egal */ }
+  window.location.href = 'http://localhost/';
+}
+
+const ZURUECKSETZEN = 'Für ein anderes Studio einrichten';
+
+async function verwaltung() {
+  $('#inhalt').innerHTML = '<h1>Dieser PC</h1><p class="caption">Lädt …</p>';
+  const v = await api('/api/verwaltung');
+  const sp = v.speicher || {};
+  const speicherText = { system: 'Systemplatte', platte: `eigene Platte${sp.modell ? ` (${sp.modell})` : ''}`, bestand: 'Docker-Volumes' }[sp.art] || '–';
+  const fern = v.fernwartung === 'aus' ? 'abgewählt'
+    : v.tailscale ? `${v.tailscale.name || ''}${v.tailscale.ip ? ` (${v.tailscale.ip})` : ''}` : (v.fernwartung || '–');
+  const laeuft = stand.auftrag?.laeuft && stand.auftrag?.name === ZURUECKSETZEN;
+  $('#inhalt').innerHTML = `
+    <h1>Dieser PC</h1>
+    <p>Dieser PC ist eingerichtet für <b>${esc(v.studio || 'unbekannt')}</b>.</p>
+    <table class="werte">
+      <tr><td>Studio</td><td>${esc(v.studio || '–')}</td></tr>
+      <tr><td>Studio-Kennung</td><td>${esc(v.tenant_id || '–')}</td></tr>
+      <tr><td>Cloud</td><td>${v.gekoppelt ? `<span class="badge ok">gekoppelt</span> ${esc(v.cloud)}` : '<span class="badge nein">nicht gekoppelt</span>'}</td></tr>
+      <tr><td>Studio-Version</td><td>${esc(v.studio_version || '–')}</td></tr>
+      <tr><td>Installer-Version</td><td>${esc(v.installer)}</td></tr>
+      <tr><td>Eingerichtet am</td><td>${esc(datumZeit(v.installiert_at))}</td></tr>
+      <tr><td>Rechnername</td><td>${esc(v.rechner)}</td></tr>
+      <tr><td>Fernwartung</td><td>${esc(fern)}</td></tr>
+      <tr><td>Datenspeicher</td><td>${esc(speicherText)}</td></tr>
+      <tr><td>Letzte Sicherung</td><td>${esc(datumZeit(v.letzte_sicherung))}</td></tr>
+      <tr><td>Updates</td><td>${esc(v.updates?.modus || '–')}${v.updates?.modus === 'automatisch' ? ` (${esc(v.updates.fenster_von)}–${esc(v.updates.fenster_bis)} Uhr)` : ''}</td></tr>
+    </table>
+    <div class="zeile"><button class="haupt" id="zu-studio">Zurück zu Studio</button></div>
+    <p class="caption">Alt+F4 schließt dieses Fenster und führt zum Schreibtisch.</p>
+
+    <h2>${ZURUECKSETZEN}</h2>
+    <p>Soll dieser PC künftig für ein anderes Studio arbeiten, wird hier alles vom bisherigen Studio gelöscht.
+       Danach beginnt die Einrichtung von vorn, mit dem Lizenzschlüssel des neuen Studios.</p>
+    <div class="zeile"><button id="zuruecksetzen-zeigen" ${laeuft ? 'disabled' : ''}>${ZURUECKSETZEN} …</button></div>
+    <div id="zuruecksetzen"></div>`;
+  knopf('#zu-studio', zuStudio);
+  knopf('#zuruecksetzen-zeigen', async () => { zuruecksetzenFormular(v); $('#zuruecksetzen-zeigen').remove(); });
+  if (laeuft) { zuruecksetzenFormular(v); zuruecksetzenVerfolgen(); }
+}
+
+function zuruecksetzenFormular(v, ohneSicherungAnbieten = false) {
+  $('#zuruecksetzen').innerHTML = `
+    <div class="box warnung">
+      <b>Das passiert:</b>
+      <ol class="liste">
+        <li>Eine letzte Sicherung von <b>${esc(v.studio || 'diesem Studio')}</b> geht in die Cloud und ans Backup-Ziel.
+            Klappt sie nicht, wird nichts gelöscht.</li>
+        <li>Der PC löst sich in der Cloud vom bisherigen Studio. Dessen Lizenz lässt sich dann auf einem anderen PC aktivieren.</li>
+        <li>Datenbank, Einstellungen, Fernwartung und Sicherungsschlüssel auf diesem PC werden gelöscht.
+            Sicherungen am Backup-Ziel bleiben dort liegen.</li>
+        <li>Die Einrichtung beginnt von vorn${stand.ist_image ? ', auch mit einem neuen Passwort für diesen PC' : ''}.</li>
+      </ol>
+      Vorher im Studio den Tagesabschluss machen und den DSFinV-K-Export ziehen. Hört das bisherige Studio ganz auf,
+      die Kasse und TSE beim Finanzamt abmelden. Das kann dieser PC nicht für Sie erledigen.
+    </div>
+    <div class="raster">
+      <label class="feld"><span>SystemOwner – Benutzer oder E-Mail</span><input type="text" id="so-login" autocomplete="off"></label>
+      <label class="feld"><span>Passwort</span><input type="password" id="so-passwort" autocomplete="off"></label>
+    </div>
+    <label class="feld"><span>Zur Bestätigung den Namen des bisherigen Studios eintippen</span>
+      <input type="text" id="so-name" autocomplete="off" placeholder="${esc(v.studio || '')}"></label>
+    ${ohneSicherungAnbieten ? `<label class="feld ankreuzen"><input type="checkbox" id="so-ohne">
+      <span>Ohne letzte Sicherung löschen. Die Daten seit der letzten erfolgreichen Sicherung
+      (${esc(datumZeit(v.letzte_sicherung))}) gehen dabei verloren.</span></label>` : ''}
+    <div id="meldung"></div>
+    <div class="zeile"><button class="gefahr" id="zuruecksetzen-los">Alles löschen und neu einrichten</button></div>
+    <pre class="protokoll" id="protokoll" hidden></pre>`;
+  knopf('#zuruecksetzen-los', async () => {
+    await api('/api/verwaltung/anderes-studio', {
+      login: $('#so-login').value, passwort: $('#so-passwort').value, bestaetigung: $('#so-name').value,
+      ohne_sicherung: !!$('#so-ohne')?.checked,
+    });
+    $('#so-passwort').value = '';
+    zuruecksetzenVerfolgen();
+  });
+}
+
+function zuruecksetzenVerfolgen() {
+  $('#zuruecksetzen-los') && ($('#zuruecksetzen-los').disabled = true);
+  $('#protokoll').hidden = false;
+  protokollVerfolgen((e) => {
+    $('#zuruecksetzen').innerHTML = `
+      <div class="box ok"><b>Erledigt.</b> Von ${esc(e?.studio_alt || 'dem bisherigen Studio')} ist nichts mehr auf diesem PC.
+        ${e?.sicherung ? `Letzte Sicherung: ${esc(e.sicherung)}.` : ''}</div>
+      ${e?.cloud_geloest ? '' : `<div class="box warnung">Die Cloud hat den PC nicht gelöst. Bitte in der Plattform beim
+        bisherigen Studio unter „Edge &amp; Installation“ auf „Gerät lösen“ klicken.</div>`}
+      ${e?.platte_nicht_geleert ? `<div class="box warnung">Die Datenplatte war nicht eingehängt und ist nicht geleert. Bitte im
+        Schritt „Speicher &amp; Sicherung“ <b>neu formatieren</b> wählen.</div>` : ''}
+      <div class="zeile"><button class="haupt" id="neu-einrichten">Einrichtung beginnen</button></div>`;
+    knopf('#neu-einrichten', () => neuLaden());
+  }, (fehler) => {
+    // Sicherung gescheitert: nichts gelöscht – jetzt darf man ausdrücklich ohne Sicherung weiter.
+    if (/Sicherung/.test(fehler)) api('/api/verwaltung').then((v) => {
+      zuruecksetzenFormular(v, true); fehlerZeigen(new Error(fehler));
+    });
+  });
 }
 
 neuLaden().catch((e) => { $('#inhalt').innerHTML = `<div class="box fehler">${esc(e.message)}</div>`; });

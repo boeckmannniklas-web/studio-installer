@@ -12,13 +12,11 @@ if [ "$1" = "configure" ]; then
   command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
   if [ -d /run/systemd/system ]; then
     systemctl daemon-reload
-    # Bereits eingerichtet: der Assistent bleibt aus, bis ihn jemand mit studio-einrichtung holt.
-    if [ ! -f /opt/studio/installiert.json ]; then
-      systemctl enable studio-setup.service || true
-      # restart statt start: nach einem Update soll der neue Code laufen
-      systemctl restart studio-setup.service || true
-    else
-      systemctl try-restart studio-setup.service || true
+    # Der Dienst läuft immer: vor der Einrichtung als Assistent, danach als Verwaltung dieses PCs
+    # (Fenster nach Alt+F4). restart statt start: nach einem Update soll der neue Code laufen.
+    systemctl enable studio-setup.service || true
+    systemctl restart studio-setup.service || true
+    if [ -f /opt/studio/installiert.json ]; then
       # Eingerichtete Studios: Austauschordner nachrüsten, Sicherung und Updates einschalten.
       /usr/bin/studio-betrieb nachruesten || true
       systemctl enable --now studio-sicherung.timer studio-update.timer studio-auftrag.path || true

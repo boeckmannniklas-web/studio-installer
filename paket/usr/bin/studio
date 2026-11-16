@@ -16,7 +16,14 @@ if [ -f /opt/studio/installiert.json ]; then
     fi
     sleep 2
   done
-  kiosk_oeffnen http://localhost/
+  if kiosk_laeuft; then
+    # Schon offen (Kasse oder Verwaltung): dorthin die Kasse holen.
+    ansicht_setzen studio
+    kiosk_oeffnen http://localhost/
+  else
+    # Kasse mit Verwaltungsfenster nach Alt+F4 (siehe kiosk-schleife.sh)
+    starten /usr/lib/studio-installer/kiosk-schleife.sh
+  fi
   exit 0
 fi
 TOKEN_DATEI=/run/studio-setup/token

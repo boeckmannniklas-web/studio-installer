@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import betrieb  # noqa: E402
 import schritte  # noqa: E402
 import speicher  # noqa: E402
+import verwaltung  # noqa: E402
 
 ADRESSE, PORT = "127.0.0.1", 8099
 WEB = Path(__file__).resolve().parent / "web"
@@ -102,6 +103,10 @@ class Auftrag:
 
 
 AUFTRAG = Auftrag()
+
+#: Was das Kiosk-Fenster gerade zeigt – die Schleife (kiosk-schleife.sh) fragt es ab, wenn der
+#: Browser geschlossen wurde: nach Studio kommt die Verwaltung, nach der Verwaltung der Schreibtisch.
+KIOSK = {"ansicht": "studio"}
 
 
 def status() -> dict:
@@ -255,6 +260,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"platten": speicher.platten(), "bestand": speicher.bestand_vorhanden()})
             if url.path == "/api/sicherung/blatt":
                 return self._json(200, {"blatt": schritte.wiederherstellungsblatt()})
+            if url.path == "/api/verwaltung":
+                return self._json(200, verwaltung.uebersicht())
+            if url.path == "/api/kiosk/ansicht":
+                return self._json(200, KIOSK)
             if url.path == "/api/sicherungen":
                 return self._json(200, schritte.sicherungen_auflisten())
             self._json(404, {"detail": "Unbekannt."})
@@ -295,6 +304,20 @@ class Handler(BaseHTTPRequestHandler):
             return schritte.neu_beginnen()
         if pfad == "/api/wiederherstellung/laden":
             AUFTRAG.starten("Sicherung laden", lambda log: schritte.sicherung_laden(d, log))
+            return {"gestartet": True}
+        if pfad == "/api/kiosk/ansicht":
+            if d.get("ansicht") not in ("studio", "verwaltung"):
+                raise schritte.Fehler("Unbekannte Ansicht.")
+            KIOSK["ansicht"] = d["ansicht"]
+            return KIOSK
+        if pfad == "/api/verwaltung/anderes-studio":
+            if not schritte.installiert():
+                raise schritte.Fehler("Dieser PC ist noch nicht eingerichtet.")
+            verwaltung.bestaetigung_pruefen(str(d.get("bestaetigung", "")))
+            wer = verwaltung.systemowner_pruefen(str(d.get("login", "")), str(d.get("passwort", "")))
+            ohne = bool(d.get("ohne_sicherung"))
+            AUFTRAG.starten("Für ein anderes Studio einrichten",
+                            lambda log: verwaltung.anderes_studio(log, ohne_sicherung=ohne, wer=wer))
             return {"gestartet": True}
         if pfad == "/api/installieren":
             AUFTRAG.starten("Studio installieren", schritte.installieren)

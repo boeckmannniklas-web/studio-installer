@@ -642,8 +642,7 @@ def installieren(log) -> dict:
         (ZUSTAND / name).unlink(missing_ok=True)
     shutil.rmtree(ZUSTAND / "wiederherstellung", ignore_errors=True)
     WIEDERHERSTELLUNGSBLATT.clear()
-    # Der Assistent startet ab jetzt nicht mehr beim Hochfahren; `studio-einrichtung` holt ihn zurück.
-    _ausfuehren(["systemctl", "disable", "studio-setup.service"], log, pruefen=False)
+    # Der Dienst bleibt an: nach Alt+F4 zeigt er die Verwaltung dieses PCs (kiosk-schleife.sh).
     log("Fertig.")
     return {**ergebnis, "zugang": zugang}
 

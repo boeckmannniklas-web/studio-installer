@@ -2,7 +2,8 @@
 # Gemeinsamer Teil von /usr/bin/studio und /usr/bin/studio-einrichtung:
 #   kiosk_oeffnen <url>
 # Öffnet die Adresse als Vollbild ohne Adressleiste und Tabs (Kiosk). Alt+F4 schließt das
-# Fenster, darunter liegt der normale Schreibtisch – das Studio-Icon öffnet es wieder.
+# Fenster; bei der Kasse folgt die Verwaltung dieses PCs (kiosk-schleife.sh), danach der
+# normale Schreibtisch – das Studio-Icon öffnet die Kasse wieder.
 #
 # Ein eigenes Firefox-Profil hält den Kiosk von einem normal geöffneten Firefox getrennt:
 # sonst landet die Adresse als Tab im vorhandenen Fenster, und --kiosk greift nicht.
@@ -58,6 +59,63 @@ kiosk_oeffnen() {
   done
   # Kein bekannter Browser: wenigstens irgendwie öffnen.
   xdg-open "$URL"
+}
+
+# Läuft schon ein Kiosk-Fenster dieses Benutzers? Dann übernimmt es die Adresse (Firefox sucht
+# die laufende Instanz je Profil), und der neue Aufruf ist sofort wieder fertig.
+kiosk_laeuft() {
+  pgrep -u "$(id -u)" -f -- "$KIOSK_PROFIL" >/dev/null 2>&1
+}
+
+# Wie kiosk_oeffnen, aber im Vordergrund: kehrt erst zurück, wenn das Fenster zu ist.
+kiosk_vordergrund() {
+  URL="$1"
+  if command -v firefox >/dev/null 2>&1; then
+    firefox_profil_anlegen
+    firefox -P "$KIOSK_PROFIL" --kiosk "$URL" >/dev/null 2>&1
+    return $?
+  fi
+  for chrom in chromium chromium-browser google-chrome; do
+    if command -v "$chrom" >/dev/null 2>&1; then
+      "$chrom" --kiosk --no-first-run --noerrdialogs --disable-session-crashed-bubble \
+        --user-data-dir="$HOME/.config/$KIOSK_PROFIL" "--app=$URL" >/dev/null 2>&1
+      return $?
+    fi
+  done
+  return 2  # kein bekannter Browser
+}
+
+# ── Dienst studio-setup (Assistent bzw. Verwaltung) ───────────────────────────
+# Das Token ist nur für root und die Gruppe sudo lesbar. Ohne Token (kein Administrator)
+# gibt es kein Verwaltungsfenster – Alt+F4 führt dann wie früher auf den Schreibtisch.
+SETUP=http://127.0.0.1:8099
+
+setup_token() {
+  cat "${STUDIO_SETUP_TOKEN:-/run/studio-setup/token}" 2>/dev/null
+}
+
+# setup_api <pfad> [json] – das Token geht per Kopfzeilen-Datei, nicht über die Befehlszeile.
+setup_api() {
+  T=$(setup_token)
+  [ -n "$T" ] || return 1
+  KOPF=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/studio-kopf.XXXXXX") || return 1
+  printf 'X-Studio-Setup: 1\nCookie: studio_setup=%s\nContent-Type: application/json\n' "$T" >"$KOPF"
+  if [ -n "${2:-}" ]; then
+    curl -fs --max-time 5 -H @"$KOPF" -X POST -d "$2" "$SETUP$1"
+  else
+    curl -fs --max-time 5 -H @"$KOPF" "$SETUP$1"
+  fi
+  RC=$?
+  rm -f "$KOPF"
+  return $RC
+}
+
+ansicht_setzen() {
+  setup_api /api/kiosk/ansicht "{\"ansicht\":\"$1\"}" >/dev/null 2>&1 || true
+}
+
+ansicht_lesen() {
+  setup_api /api/kiosk/ansicht 2>/dev/null | sed -n 's/.*"ansicht": *"\([a-z]*\)".*/\1/p'
 }
 
 meldung() {

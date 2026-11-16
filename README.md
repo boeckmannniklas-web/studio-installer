@@ -20,7 +20,11 @@ mit eigenem Profil `studio-kiosk`, Richtlinien in `/etc/firefox/policies/policie
 
 - Auf dem Studio-Image startet Studio nach der Anmeldung automatisch (Benutzer-Unit `studio-kiosk.service`,
   nur wenn `/etc/studio-os` existiert). Bei einem Einzeiler-PC öffnet erst das Icon.
-- **Alt+F4** schließt das Vollbild, darunter liegt der normale Schreibtisch. Das Icon öffnet es wieder.
+- **Alt+F4** auf der Kasse zeigt die Übersicht **„Dieser PC“** (Installer- und Studio-Version, an welches
+  Studio der PC gebunden ist, Cloud, Fernwartung, Speicher, letzte Sicherung). Ein zweites Alt+F4 führt zum
+  Schreibtisch, „Zurück zu Studio“ zur Kasse. Das Icon öffnet die Kasse wieder. Die Schleife dafür ist
+  `/usr/lib/studio-installer/kiosk-schleife.sh`; ohne Administrator-Konto (Token nicht lesbar) geht
+  Alt+F4 wie früher direkt zum Schreibtisch.
 - Nach dem Hochfahren wartet der Starter, bis Studio antwortet. Nach einem Update lädt die Kasse im
   Leerlauf von selbst neu.
 
@@ -86,8 +90,28 @@ Er läuft lokal unter `http://127.0.0.1:8099` und führt durch diese Schritte:
    abgeschlossen hat.
 9. **Fertig** – zeigt die erste Anmeldung. Das Passwort muss danach geändert werden.
 
-Danach öffnet das Icon direkt Studio. Den Assistenten holt `studio-einrichtung` zurück
-(Administrator-Konto nötig). Nach der Installation lässt sich dort das Backup-Ziel ändern.
+Danach öffnet das Icon direkt Studio. Der Dienst `studio-setup` läuft weiter und zeigt nach Alt+F4 die
+Übersicht „Dieser PC“; `studio-einrichtung` öffnet sie ebenfalls (Administrator-Konto nötig). Von dort
+lässt sich das Backup-Ziel ändern.
+
+### Für ein anderes Studio einrichten
+
+In „Dieser PC“ → **„Für ein anderes Studio einrichten“**: Benutzer und Passwort eines **SystemOwners**
+(geprüft am Studio dieses PCs, höchstens 5 Fehlversuche je 5 Minuten) und zur Bestätigung den Namen des
+bisherigen Studios. Dann, in dieser Reihenfolge:
+
+1. letzte Sicherung (Cloud und/oder Backup-Ziel). Scheitert sie, wird nichts gelöscht; erst danach
+   bietet die Seite ausdrücklich „ohne letzte Sicherung“ an,
+2. Timer aus, der PC löst sich in der Cloud vom bisherigen Studio (`POST /api/v1/edge/freigeben`,
+   ab Studio-Cloud mit diesem Endpunkt; sonst Hinweis auf „Gerät lösen“ in der Plattform),
+3. `docker compose down -v`, Datenordner löschen (Systemplatte) bzw. leeren (eigene Platte, nicht
+   formatieren), Backup-Ziel nur aushängen – die Sicherungen dort bleiben,
+4. `/opt/studio`, `/etc/studio`, Zustand des Assistenten, Austausch- und Arbeitsordner löschen.
+
+Docker, die Images und das Paket bleiben. Danach beginnt der Assistent von vorn (auf dem Image auch mit
+dem PC-Passwort). Ohne laufendes Studio oder ohne Bildschirm: `sudo studio-betrieb anderes-studio`
+(fragt den Studionamen ab; `--ohne-sicherung` nur, wenn die Sicherung nicht geht).
+Abmeldung von Kasse/TSE beim Finanzamt und den alten Rechner in der Tailscale-Verwaltung erledigt das nicht.
 
 ## Betrieb: Sicherung und Updates
 
@@ -112,7 +136,8 @@ Danach öffnet das Icon direkt Studio. Den Assistenten holt `studio-einrichtung`
 - Studio im Container und dieser Dienst reden über `/var/lib/studio-austausch` (im Container
   `/data/host`). Das bindet `/opt/studio/compose.lokal.yml` ein, die der Installer erzeugt.
 
-Von Hand: `sudo studio-betrieb sichern`, `sudo studio-betrieb update-pruefen`, `sudo studio-betrieb status`.
+Von Hand: `sudo studio-betrieb sichern`, `sudo studio-betrieb update-pruefen`, `sudo studio-betrieb status`,
+`sudo studio-betrieb anderes-studio`.
 
 ### Sicherheit
 

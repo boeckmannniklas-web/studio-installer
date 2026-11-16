@@ -1,9 +1,9 @@
 Package: studio-installer
-Version: 0.2.0
+Version: 0.3.0
 Section: admin
 Priority: optional
 Architecture: all
-Depends: python3 (>= 3.10), python3-cryptography, curl, ca-certificates, iproute2, xdg-utils, xdg-user-dirs, policykit-1 | pkexec, age, util-linux, e2fsprogs, cifs-utils, nfs-common
+Depends: python3 (>= 3.10), python3-cryptography, curl, procps, ca-certificates, iproute2, xdg-utils, xdg-user-dirs, policykit-1 | pkexec, age, util-linux, e2fsprogs, cifs-utils, nfs-common
 Recommends: libnotify-bin, python3-qrcode, unattended-upgrades
 Maintainer: Studio-Plattform <noreply@ki-sunlounge.de>
 Homepage: https://github.com/boeckmannniklas-web/studio-installer

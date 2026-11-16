@@ -868,6 +868,12 @@ INSTALLER_QUELLE = os.environ.get(
 
 def installer_aktualisieren(log) -> bool:
     """Neuere Fassung dieses Pakets einspielen. Prüfsumme aus SHA256SUMS des Releases."""
+    # Nicht mitten in „Für ein anderes Studio einrichten“: das Paket startet den Dienst neu.
+    with sperre("installer"):
+        return _installer_aktualisieren(log)
+
+
+def _installer_aktualisieren(log) -> bool:
     try:
         with urllib.request.urlopen(urllib.request.Request(INSTALLER_QUELLE + "/SHA256SUMS",
                                                            headers={"User-Agent": "studio-betrieb"}), timeout=30) as r:
@@ -989,6 +995,25 @@ def nachruesten(log=log_stdout) -> bool:
 
 
 # ── Befehlszeile ──────────────────────────────────────────────────────────────
+def _anderes_studio_terminal(ohne_sicherung: bool) -> int:
+    """Wie der Knopf im Verwaltungsfenster – für PCs ohne Bildschirm oder ohne laufendes Studio.
+    Wer root ist, braucht kein SystemOwner-Passwort; bestätigt wird mit dem Studionamen."""
+    import verwaltung
+    if os.geteuid() != 0:
+        raise Fehler("Bitte mit sudo aufrufen.")
+    name = verwaltung.uebersicht().get("studio") or ""
+    print(f"Dieser PC gehört bisher zu: {name or 'unbekannt'}")
+    print("Alles von diesem Studio wird gelöscht (vorher eine letzte Sicherung"
+          + (", hier ausdrücklich OHNE" if ohne_sicherung else "") + ").")
+    verwaltung.bestaetigung_pruefen(input("Zur Bestätigung den Namen des Studios eintippen: "))
+    ergebnis = verwaltung.anderes_studio(log_stdout, ohne_sicherung=ohne_sicherung, wer="Terminal (root)")
+    # Der Assistent hält Zwischenstände im Speicher – frisch starten.
+    _ausfuehren(["systemctl", "enable", "studio-setup.service"], pruefen=False)
+    _ausfuehren(["systemctl", "restart", "studio-setup.service"], pruefen=False)
+    print(json.dumps(ergebnis, indent=2, ensure_ascii=False))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     import argparse
     p = argparse.ArgumentParser(prog="studio-betrieb", description="Sicherung, Updates und Aufträge des Studio-Edge")
@@ -1001,6 +1026,8 @@ def main(argv: list[str]) -> int:
     unter.add_parser("auftraege", help="Anforderungen aus dem Studio abarbeiten")
     unter.add_parser("status", help="Zustand ausgeben und für das Studio ablegen")
     unter.add_parser("nachruesten", help="ältere Installation an Sicherung und Updates anschließen")
+    r = unter.add_parser("anderes-studio", help="alles vom bisherigen Studio löschen, Assistent beginnt von vorn")
+    r.add_argument("--ohne-sicherung", action="store_true", help="ohne letzte Sicherung (nur wenn sie nicht geht)")
     e = unter.add_parser("updates-einstellen")
     e.add_argument("modus", choices=["automatisch", "manuell"])
     e.add_argument("--von")
@@ -1017,6 +1044,8 @@ def main(argv: list[str]) -> int:
             auftraege()
         elif a.befehl == "nachruesten":
             nachruesten()
+        elif a.befehl == "anderes-studio":
+            return _anderes_studio_terminal(a.ohne_sicherung)
         elif a.befehl == "updates-einstellen":
             print(json.dumps(updates_einstellen(a.modus, a.von, a.bis), indent=2))
         else:
