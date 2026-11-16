@@ -1,6 +1,6 @@
 #!/bin/sh
 # Studio-Icon: nach der Einrichtung die Kasse öffnen, vorher den Einrichtungs-Assistenten –
-# beides im Kioskmodus (Vollbild ohne Adressleiste, siehe kiosk.sh).
+# beides als App-Fenster (maximiert, ohne Adressleiste, minimierbar – siehe kiosk.sh).
 . /usr/lib/studio-installer/kiosk.sh
 
 if [ -f /opt/studio/installiert.json ]; then

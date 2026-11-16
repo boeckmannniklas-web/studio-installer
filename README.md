@@ -13,14 +13,18 @@ Es gibt den Installer in zwei Formen:
 Beide Formen enden am selben Ort: Auf dem Schreibtisch liegt das Icon **Studio**. Der erste Klick
 darauf öffnet den Einrichtungs-Assistenten. Beim Studio-Image öffnet er sich nach der Anmeldung von selbst.
 
-## Kioskmodus
+## App-Fenster (früher Kioskmodus)
 
-Assistent und Studio öffnen im **Kioskmodus**: Vollbild ohne Adressleiste und Tabs (Firefox `--kiosk`
-mit eigenem Profil `studio-kiosk`, Richtlinien in `/etc/firefox/policies/policies.json`).
+Assistent und Studio öffnen als **App-Fenster**: maximiert, ohne Adressleiste und Tabs, aber mit
+Titelleiste. So lässt sich das Fenster minimieren und verkleinern, etwa um einen Lizenzschlüssel oder
+TSE-Zugangsdaten aus einer Mail zu kopieren; F11 schaltet auf Vollbild. Technik: Firefox mit eigenem
+Profil `studio-kiosk` und App-Kennung `studio` (`--name`, das Dock zeigt das Fenster unter dem
+Studio-Icon), Leisten per `userChrome.css` ausgeblendet, Einstellungen per `user.js` – beides schreibt
+`kiosk.sh` vor jedem Start. Richtlinien in `/etc/firefox/policies/policies.json`.
 
 - Auf dem Studio-Image startet Studio nach der Anmeldung automatisch (Benutzer-Unit `studio-kiosk.service`,
   nur wenn `/etc/studio-os` existiert). Bei einem Einzeiler-PC öffnet erst das Icon.
-- **Alt+F4** auf der Kasse zeigt die Übersicht **„Dieser PC“** (Installer- und Studio-Version, an welches
+- **Alt+F4** (oder das X oben rechts) auf der Kasse zeigt die Übersicht **„Dieser PC“** (Installer- und Studio-Version, an welches
   Studio der PC gebunden ist, Cloud, Fernwartung, Speicher, letzte Sicherung). Ein zweites Alt+F4 führt zum
   Schreibtisch, „Zurück zu Studio“ zur Kasse. Das Icon öffnet die Kasse wieder. Die Schleife dafür ist
   `/usr/lib/studio-installer/kiosk-schleife.sh`; ohne Administrator-Konto (Token nicht lesbar) geht

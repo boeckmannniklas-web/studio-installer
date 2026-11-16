@@ -1,16 +1,21 @@
 #!/bin/sh
 # Gemeinsamer Teil von /usr/bin/studio und /usr/bin/studio-einrichtung:
 #   kiosk_oeffnen <url>
-# Öffnet die Adresse als Vollbild ohne Adressleiste und Tabs (Kiosk). Alt+F4 schließt das
-# Fenster; bei der Kasse folgt die Verwaltung dieses PCs (kiosk-schleife.sh), danach der
-# normale Schreibtisch – das Studio-Icon öffnet die Kasse wieder.
+# Öffnet die Adresse als App-Fenster: maximiert, ohne Adressleiste und Tabs, aber mit
+# Titelleiste – so lässt es sich minimieren und verkleinern (etwa um einen Lizenzschlüssel
+# oder TSE-Zugangsdaten aus einer Mail zu kopieren). F11 schaltet auf Vollbild. Alt+F4 oder
+# das X schließt das Fenster; bei der Kasse folgt die Verwaltung dieses PCs
+# (kiosk-schleife.sh), danach der normale Schreibtisch – das Studio-Icon öffnet die Kasse wieder.
 #
-# Ein eigenes Firefox-Profil hält den Kiosk von einem normal geöffneten Firefox getrennt:
-# sonst landet die Adresse als Tab im vorhandenen Fenster, und --kiosk greift nicht.
+# Ein eigenes Firefox-Profil hält das App-Fenster von einem normal geöffneten Firefox getrennt:
+# sonst landet die Adresse als Tab im vorhandenen Fenster. --name gibt dem Fenster die
+# App-Kennung „studio“: Das Dock zeigt es unter dem Studio-Icon, und ein Klick darauf holt das
+# minimierte Fenster zurück, statt ein zweites zu öffnen.
 # Nicht über xdg-open oder gtk-launch: die kennen keinen Kiosk, und xdg-open lädt eine
 # http-Adresse unter GNOME per gvfs womöglich in den Texteditor.
 
 KIOSK_PROFIL=studio-kiosk
+APP_NAME=studio
 
 firefox_profil_anlegen() {
   # Der Snap legt Profile unter ~/snap/firefox/common/.mozilla ab; --CreateProfile weiß das selbst.
@@ -19,6 +24,55 @@ firefox_profil_anlegen() {
     [ -f "$ini" ] && grep -qx "Name=$KIOSK_PROFIL" "$ini" && return 0
   done
   firefox --headless --CreateProfile "$KIOSK_PROFIL" >/dev/null 2>&1 || true
+}
+
+# Ordner des Kiosk-Profils aus profiles.ini (relativ oder absolut eingetragen).
+firefox_profil_ordner() {
+  for basis in "$HOME/snap/firefox/common/.mozilla/firefox" "$HOME/.mozilla/firefox"; do
+    [ -f "$basis/profiles.ini" ] || continue
+    ORDNER=$(awk -F= -v n="$KIOSK_PROFIL" -v basis="$basis" '
+      function aus() { if (name == n && p != "") { print (rel == "0" ? p : basis "/" p); fertig = 1; exit } }
+      /^\[/ { aus(); name = ""; p = ""; rel = "1"; next }
+      $1 == "Name" { name = $2 } $1 == "Path" { p = $2 } $1 == "IsRelative" { rel = $2 }
+      END { if (!fertig) aus() }' "$basis/profiles.ini")
+    [ -n "$ORDNER" ] && [ -d "$ORDNER" ] && { echo "$ORDNER"; return 0; }
+  done
+  return 1
+}
+
+# App-Fenster statt Kiosk: Adressleiste und Tabs per userChrome.css ausblenden, Titelleiste
+# des Systems (Minimieren, Maximieren, Schließen) einschalten, maximiert starten.
+firefox_profil_einrichten() {
+  firefox_profil_anlegen
+  ORDNER=$(firefox_profil_ordner) || return 0
+  mkdir -p "$ORDNER/chrome"
+  cat >"$ORDNER/chrome/userChrome.css" <<'CSS'
+/* Studio-Installer: App-Fenster ohne Adressleiste, Lesezeichen und Tabs */
+#TabsToolbar, #nav-bar, #PersonalToolbar, #titlebar, #sidebar-main, #sidebar-box { visibility: collapse !important; }
+CSS
+  cat >"$ORDNER/user.js" <<'JS'
+// Studio-Installer: App-Fenster (siehe /usr/lib/studio-installer/kiosk.sh)
+user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);
+user_pref("browser.tabs.inTitlebar", 0);
+user_pref("browser.toolbars.bookmarks.visibility", "never");
+// Ohne Tab-Leiste wäre ein neuer Tab unsichtbar: Links mit Ziel _blank öffnen als eigenes Fenster.
+user_pref("browser.link.open_newwindow", 2);
+// Das Studio-Icon bei offenem Fenster lädt die Adresse in das vorhandene Fenster.
+user_pref("browser.link.open_newwindow.override.external", 1);
+user_pref("browser.startup.homepage_override.mstone", "ignore");
+user_pref("sidebar.revamp", false);
+JS
+  # Jeder Start maximiert – auch wenn das Fenster zuletzt verkleinert geschlossen wurde.
+  python3 - "$ORDNER/xulstore.json" <<'PY' >/dev/null 2>&1 || true
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+try:
+    d = json.loads(p.read_text())
+except Exception:
+    d = {}
+d.setdefault("chrome://browser/content/browser.xhtml", {}).setdefault("main-window", {})["sizemode"] = "maximized"
+p.write_text(json.dumps(d))
+PY
 }
 
 starten() {
@@ -44,16 +98,16 @@ starten() {
 kiosk_oeffnen() {
   URL="$1"
   if command -v firefox >/dev/null 2>&1; then
-    firefox_profil_anlegen
     # Läuft das Kiosk-Profil schon, bekommt diese Instanz die Adresse (Firefox sucht die
-    # laufende Instanz je Profil) – es entsteht kein zweites Vollbild.
-    starten firefox -P "$KIOSK_PROFIL" --kiosk "$URL"
+    # laufende Instanz je Profil) – es entsteht kein zweites Fenster.
+    kiosk_laeuft || firefox_profil_einrichten
+    starten firefox --name "$APP_NAME" -P "$KIOSK_PROFIL" "$URL"
     return 0
   fi
   for chrom in chromium chromium-browser google-chrome; do
     if command -v "$chrom" >/dev/null 2>&1; then
-      starten "$chrom" --kiosk --no-first-run --noerrdialogs --disable-session-crashed-bubble \
-        --user-data-dir="$HOME/.config/studio-kiosk" "--app=$URL"
+      starten "$chrom" --start-maximized --no-first-run --noerrdialogs --disable-session-crashed-bubble \
+        --class="$APP_NAME" --user-data-dir="$HOME/.config/studio-kiosk" "--app=$URL"
       return 0
     fi
   done
@@ -71,14 +125,14 @@ kiosk_laeuft() {
 kiosk_vordergrund() {
   URL="$1"
   if command -v firefox >/dev/null 2>&1; then
-    firefox_profil_anlegen
-    firefox -P "$KIOSK_PROFIL" --kiosk "$URL" >/dev/null 2>&1
+    kiosk_laeuft || firefox_profil_einrichten
+    firefox --name "$APP_NAME" -P "$KIOSK_PROFIL" "$URL" >/dev/null 2>&1
     return $?
   fi
   for chrom in chromium chromium-browser google-chrome; do
     if command -v "$chrom" >/dev/null 2>&1; then
-      "$chrom" --kiosk --no-first-run --noerrdialogs --disable-session-crashed-bubble \
-        --user-data-dir="$HOME/.config/$KIOSK_PROFIL" "--app=$URL" >/dev/null 2>&1
+      "$chrom" --start-maximized --no-first-run --noerrdialogs --disable-session-crashed-bubble \
+        --class="$APP_NAME" --user-data-dir="$HOME/.config/$KIOSK_PROFIL" "--app=$URL" >/dev/null 2>&1
       return $?
     fi
   done

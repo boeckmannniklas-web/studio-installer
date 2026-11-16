@@ -80,13 +80,28 @@ async function neuLaden(ziel) {
 function seitenleiste() {
   $('#schritte').innerHTML = sichtbar().map((s, i) => {
     const klassen = [s.id === aktuell ? 'aktiv' : '', erledigt(s.id) ? 'erledigt' : '', erreichbar(s.id) ? 'erreichbar' : ''].join(' ');
-    return `<li class="${klassen}" data-schritt="${s.id}"><span class="punkt">${erledigt(s.id) ? '✓' : i + 1}</span>${esc(s.titel)}</li>`;
+    return `<li class="${klassen}" data-schritt="${s.id}"><span class="punkt">${erledigt(s.id) ? '✓' : i + 1}</span>${esc(s.titel)}</li>` +
+      (s.id === 'speicher' && aktuell === 'speicher' ? unterpunkte() : '');
   }).join('');
-  document.querySelectorAll('#schritte li.erreichbar').forEach((li) =>
+  document.querySelectorAll('#schritte li.erreichbar[data-schritt]').forEach((li) =>
     li.addEventListener('click', () => {
       // Nach der Installation lässt sich nur noch das Backup-Ziel ändern (Schritt Speicher).
-      if (!stand?.installiert || ['fertig', 'speicher', 'verwaltung'].includes(li.dataset.schritt)) zeigen(li.dataset.schritt);
+      if (!stand?.installiert || ['fertig', 'speicher', 'verwaltung'].includes(li.dataset.schritt)) {
+        speicherTeil = null;
+        zeigen(li.dataset.schritt);
+      }
     }));
+  document.querySelectorAll('#schritte li.erreichbar[data-teil]').forEach((li) =>
+    li.addEventListener('click', () => { speicherTeil = li.dataset.teil; zeigen('speicher'); }));
+}
+
+// Unterpunkte von „Speicher & Sicherung“ – klein unter dem aktiven Schritt, der aktuelle hervorgehoben.
+function unterpunkte() {
+  const jetzt = speicherAktuell();
+  return `<li class="unterpunkte"><ol>${speicherTeile().map((t, i) => {
+    const klassen = [t.id === jetzt ? 'jetzt' : '', teilErledigt(t.id) ? 'erledigt' : '', teilErreichbar(t.id) ? 'erreichbar' : ''].join(' ');
+    return `<li class="${klassen}" data-teil="${t.id}"><span class="mini">${teilErledigt(t.id) && t.id !== jetzt ? '✓' : i + 1}</span>${esc(t.titel)}</li>`;
+  }).join('')}</ol></li>`;
 }
 
 function zeigen(id) {
@@ -111,20 +126,49 @@ function knopf(sel, arbeit) {
   });
 }
 
-// ── Protokoll eines Hintergrundauftrags ───────────────────────────────────────
-function protokollVerfolgen(fertig, beiFehler) {
+// ── Hintergrundauftrag: eine Anzeige, das Protokoll zugeklappt darunter ───────
+// Sichtbar ist nur „Wird installiert …“ mit dem aktuellen Schritt. Befehle und ihre Ausgaben
+// stehen unter „Details anzeigen“ – für den Support, nicht für den Alltag.
+function laufBlock() {
+  return `
+    <div class="lauf" id="lauf" hidden>
+      <div class="lauf-kopf"><span class="kreis" aria-hidden="true"></span>
+        <div><b id="lauf-titel"></b><span class="lauf-schritt" id="lauf-schritt"></span></div>
+        <span class="caption lauf-zeit" id="lauf-zeit"></span></div>
+      <details class="details"><summary>Details anzeigen</summary><pre class="protokoll" id="protokoll"></pre></details>
+    </div>`;
+}
+
+function protokollVerfolgen(titel, fertig, beiFehler) {
   let seit = 0;
+  const start = Date.now();
   const pre = $('#protokoll');
+  $('#lauf').hidden = false;
+  $('#lauf').className = 'lauf';
+  $('#lauf-titel').textContent = titel;
+  $('#lauf-schritt').textContent = '';
+  pre.textContent = '';
+  const zeit = () => {
+    const s = Math.round((Date.now() - start) / 1000);
+    if ($('#lauf-zeit')) $('#lauf-zeit').textContent = s < 60 ? `${s} s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} min`;
+  };
+  zeit();
   umfrage = setInterval(async () => {
+    zeit();
     try {
       const a = await api(`/api/auftrag?seit=${seit}`);
       if (a.zeilen.length) {
+        // Nur nachscrollen, wenn man schon unten war – sonst springt es beim Lesen weg.
+        const unten = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4;
         pre.textContent += a.zeilen.join('\n') + '\n';
-        pre.scrollTop = pre.scrollHeight;
+        if (unten) pre.scrollTop = pre.scrollHeight;
         seit = a.gesamt;
       }
+      if (a.schritt) $('#lauf-schritt').textContent = a.schritt;
       if (!a.laeuft) {
         clearInterval(umfrage); umfrage = null;
+        $('#lauf').classList.add(a.fehler ? 'fehler' : 'fertig');
+        $('#lauf-titel').textContent = a.fehler ? `${titel.replace(/ …$/, '')} – abgebrochen` : 'Fertig';
         if (a.fehler) { fehlerZeigen(new Error(a.fehler)); if (beiFehler) beiFehler(a.fehler); }
         else fertig(a.ergebnis);
       }
@@ -181,11 +225,11 @@ function docker() {
     <p>Studio läuft in Docker-Containern. Das Installieren dauert je nach Leitung ein paar Minuten.</p>
     <div id="meldung"></div>
     <div class="zeile"><button class="haupt" id="los">Docker installieren</button></div>
-    <pre class="protokoll" id="protokoll"></pre>`;
+    ${laufBlock()}`;
   knopf('#los', async () => {
     await api('/api/docker', {});
-    $('#los').disabled = true;
-    protokollVerfolgen(() => neuLaden());
+    $('#los').hidden = true;
+    protokollVerfolgen('Docker wird installiert …', () => neuLaden(), () => { $('#los').hidden = false; });
   });
 }
 
@@ -358,37 +402,121 @@ async function konfiguration() {
 }
 
 // ── Speicher & Sicherung ──────────────────────────────────────────────────────
+// Vier Teile, immer nur einer sichtbar. Ist ein Teil erledigt, springt die Ansicht zum nächsten;
+// die Seitenleiste zeigt die Teile klein unter „Speicher & Sicherung“, der aktuelle hervorgehoben.
 const gb = (b) => b == null ? '–' : b >= 1e12 ? `${(b / 1e12).toFixed(1)} TB` : `${Math.round(b / 1e9)} GB`;
 const plattenName = (p) => `${esc(p.modell || p.name)} · ${gb(p.groesse)}${p.anschluss ? ' · ' + esc(p.anschluss.toUpperCase()) : ''} (${esc(p.name)})`;
 
-function auftragAbwarten(fertig) {
-  $('#protokoll').hidden = false;
-  $('#protokoll').textContent = '';
-  protokollVerfolgen(fertig);
+const SPEICHER_TEILE = [
+  { id: 'daten', titel: 'Datenspeicher' },
+  { id: 'ziel', titel: 'Backup-Ziel vor Ort' },
+  { id: 'schluessel', titel: 'Sicherungsschlüssel' },
+  { id: 'wiederherstellung', titel: 'Neu beginnen oder wiederherstellen', vorInstallation: true },
+];
+let speicherTeil = null;     // gewählter Teil; null = der erste offene
+let speicherHinweis = '';    // Meldung, die den Sprung zum nächsten Teil überlebt
+
+function speicherTeile() {
+  return SPEICHER_TEILE.filter((t) => !t.vorInstallation || !stand?.installiert);
+}
+
+function teilErledigt(id) {
+  if (stand?.installiert) return true;
+  const sp = stand?.speicher || {};
+  return !!{ daten: sp.daten?.festgelegt, ziel: sp.ziel, schluessel: sp.schluessel, wiederherstellung: sp.wiederherstellung?.wahl }[id];
+}
+
+function teilErreichbar(id) {
+  const teile = speicherTeile();
+  return teile.slice(0, teile.findIndex((t) => t.id === id)).every((t) => teilErledigt(t.id));
+}
+
+function speicherAktuell() {
+  const teile = speicherTeile();
+  if (speicherTeil && teile.some((t) => t.id === speicherTeil) && teilErreichbar(speicherTeil)) return speicherTeil;
+  // Nach der Installation lässt sich nur noch das Backup-Ziel ändern.
+  if (stand?.installiert) return 'ziel';
+  return (teile.find((t) => !teilErledigt(t.id)) || teile[teile.length - 1]).id;
+}
+
+// Nach einem erledigten Teil: Stand neu holen und zum nächsten offenen Teil springen – sind alle
+// erledigt, weiter zur Installation. Mit `bleiben` bleibt die Ansicht auf diesem Teil.
+async function speicherWeiter(bleiben = null) {
+  speicherTeil = bleiben;
+  stand = await api('/api/status');
+  $('#cloud').textContent = stand.cloud;
+  if (!bleiben && !stand.installiert && erledigt('speicher')) { zeigen(naechster()); return; }
+  zeigen('speicher');
+}
+
+// Während ein Auftrag läuft, ist die Fußzeile weg; scheitert er, kommt sie wieder.
+function auftragAbwarten(titel, fertig) {
+  protokollVerfolgen(titel, fertig, () => { if ($('#fuss')) $('#fuss').hidden = false; });
 }
 
 async function speicher() {
   const sp = stand.speicher || {};
   const nachInstallation = !!stand.installiert;
-  $('#inhalt').innerHTML = '<h1>Speicher & Sicherung</h1><p class="caption">Lade Platten …</p><div id="meldung"></div>';
+  const teile = speicherTeile();
+  const teil = speicherAktuell();
+  speicherTeil = teil;
+  seitenleiste();
+  const nr = teile.findIndex((t) => t.id === teil);
+  const kopf = `
+    <h1>Speicher &amp; Sicherung</h1>
+    <p class="caption">Schritt ${nr + 1} von ${teile.length} · ${esc(teile[nr].titel)}</p>`;
+
   let pl = { platten: [], bestand: false };
-  try { pl = await api('/api/platten'); } catch (e) { fehlerZeigen(e); }
+  if (['daten', 'ziel'].includes(teil)) {
+    $('#inhalt').innerHTML = `${kopf}<p class="caption">Lade Platten …</p><div id="meldung"></div>`;
+    try { pl = await api('/api/platten'); } catch (e) { fehlerZeigen(e); }
+    if (aktuell !== 'speicher') return;   // inzwischen woanders hin geklickt
+  }
   const frei = pl.platten.filter((p) => !p.gesperrt);
+
+  // Fußzeile: Zurück, die Aktion des Teils, Weiter (sobald der Teil erledigt ist).
+  const fertigHier = teilErledigt(teil);
+  const letzter = nr === teile.length - 1;
+  const weiterText = letzter ? (nachInstallation ? '' : 'Weiter zur Installation') : 'Weiter';
+  const fuss = (aktion = '') => `
+    <div id="meldung"></div>
+    ${laufBlock()}
+    <div class="zeile" id="fuss">
+      ${nr > 0 ? '<button id="zurueck">Zurück</button>' : ''}
+      ${aktion}
+      ${fertigHier && weiterText ? `<button class="haupt" id="weiter">${weiterText}</button>` : ''}
+    </div>`;
+  // Ist der Teil schon erledigt, ist „Weiter“ der Hauptknopf und die Aktion nur noch ein Ändern.
+  const art = fertigHier ? '' : 'haupt';
+
+  if (teil === 'daten') datenTeil(kopf, sp, pl, frei, fuss, art);
+  else if (teil === 'ziel') zielTeil(kopf, sp, frei, fuss, art);
+  else if (teil === 'schluessel') schluesselTeil(kopf, sp, nachInstallation, fuss, art);
+  else await wiederherstellungTeil(kopf, sp, fuss, art);
+
+  knopf('#zurueck', async () => { speicherTeil = teile[nr - 1].id; zeigen('speicher'); });
+  knopf('#weiter', async () => {
+    if (letzter) { speicherTeil = null; await neuLaden(); return; }
+    speicherTeil = teile[nr + 1].id;
+    zeigen('speicher');
+  });
+  if (speicherHinweis) { $('#meldung').innerHTML = speicherHinweis; speicherHinweis = ''; }
+}
+
+function datenTeil(kopf, sp, pl, frei, fuss, art) {
   const daten = sp.daten || {};
   const datenText = daten.art === 'platte' ? `Eigene Platte ${esc(daten.modell || '')} unter <code>${esc(daten.daten)}</code>`
     : daten.art === 'system' ? `Systemplatte unter <code>${esc(daten.daten)}</code>`
       : daten.art === 'bestand' ? 'Bestehende Installation – Daten bleiben in den Docker-Volumes' : '';
-
-  $('#inhalt').innerHTML = `
-    <h1>Speicher & Sicherung</h1>
+  $('#inhalt').innerHTML = `${kopf}
     <p>Studio hält seine Daten auf einer Platte in diesem PC und sichert jede Nacht – vor Ort und verschlüsselt in die Cloud.</p>
-
-    <h2>1 · Datenspeicher</h2>
-    ${daten.festgelegt ? `<div class="box ok">${datenText}${daten.frei != null ? ` · ${gb(daten.frei)} frei` : ''}</div>` : pl.bestand ? `
+    <h2>Datenspeicher</h2>
+    ${daten.festgelegt ? `<div class="box ok">${datenText}${daten.frei != null ? ` · ${gb(daten.frei)} frei` : ''}</div>${fuss()}`
+    : pl.bestand ? `
       <div class="box info">Auf diesem PC liegen schon Studio-Daten aus einer früheren Installation. Sie bleiben, wo sie sind.</div>
-      <div class="zeile"><button class="haupt" id="daten-los">Übernehmen</button></div>` : `
+      ${fuss(`<button class="${art}" id="daten-los">Übernehmen</button>`)}` : `
       <p class="caption">Hier liegt die laufende Datenbank. Eine Netzwerkfestplatte ist dafür nicht geeignet – bei jedem
-        Netzaussetzer stünde die Kasse. Sie kann aber unten das Backup-Ziel sein.</p>
+        Netzaussetzer stünde die Kasse. Sie kann aber im nächsten Schritt das Backup-Ziel sein.</p>
       <div class="wahl" id="daten-wahl">
         <label data-wahl="system"><input type="radio" name="daten" value="system" checked>
           <span class="titel">Systemplatte (Standard)</span><span class="text">Die Daten liegen auf der Platte, auf der auch Ubuntu läuft.</span></label>
@@ -399,9 +527,32 @@ async function speicher() {
         <label class="feld"><span>Platte</span><select id="daten-geraet">${frei.map((p) => `<option value="${esc(p.name)}">${plattenName(p)}${p.studio_daten ? ' – Studio-Datenplatte' : ''}</option>`).join('')}</select></label>
         <div id="daten-hinweis"></div>
       </div>
-      <div class="zeile"><button class="haupt" id="daten-los">Datenspeicher einrichten</button></div>`}
+      ${fuss(`<button class="${art}" id="daten-los">Datenspeicher einrichten</button>`)}`}`;
 
-    <h2>2 · Backup-Ziel vor Ort</h2>
+  const datenSetzen = () => {
+    const w = $('input[name=daten]:checked')?.value;
+    document.querySelectorAll('#daten-wahl label').forEach((l) => l.classList.toggle('gewaehlt', l.dataset.wahl === w));
+    if ($('#daten-platte')) $('#daten-platte').hidden = w !== 'platte';
+    const p = frei.find((x) => x.name === $('#daten-geraet')?.value);
+    if ($('#daten-hinweis')) $('#daten-hinweis').innerHTML = !p ? '' : p.studio_daten
+      ? '<div class="box info">Auf dieser Platte liegt schon ein Studio-Datenspeicher. Er wird übernommen, nichts wird gelöscht.</div>'
+      : `<div class="box warnung"><b>Alles auf dieser Platte wird gelöscht.</b>${p.wechselbar ? ' Eine USB-Platte darf im Betrieb nicht abgezogen werden.' : ''}
+         <label class="feld"><span>Zum Bestätigen den Namen der Platte eintippen: <code>${esc(p.name)}</code></span><input type="text" id="daten-bestaetigung" autocomplete="off"></label></div>`;
+  };
+  document.querySelectorAll('input[name=daten]').forEach((r) => r.addEventListener('change', datenSetzen));
+  $('#daten-geraet')?.addEventListener('change', datenSetzen);
+  if ($('#daten-wahl')) datenSetzen();
+  knopf('#daten-los', async () => {
+    const art = pl.bestand ? 'bestand' : $('input[name=daten]:checked')?.value;
+    await api('/api/speicher/daten', { art, platte: $('#daten-geraet')?.value, bestaetigung: $('#daten-bestaetigung')?.value || '' });
+    $('#fuss').hidden = true;
+    auftragAbwarten('Datenspeicher wird eingerichtet …', () => speicherWeiter());
+  });
+}
+
+function zielTeil(kopf, sp, frei, fuss, art) {
+  $('#inhalt').innerHTML = `${kopf}
+    <h2>Backup-Ziel vor Ort</h2>
     ${sp.ziel ? `<div class="box ok">${zielText(sp.ziel)}</div><p class="caption">Ändern: unten neu wählen und übernehmen.</p>` : ''}
     <div class="wahl" id="ziel-wahl">
       ${[['spaeter', 'Später festlegen', 'Dann sichert Studio nur in die Cloud.'],
@@ -425,57 +576,8 @@ async function speicher() {
       </div>
     </div>
     <p class="caption">Unabhängig davon geht jede Sicherung verschlüsselt in die Cloud und bleibt dort 14 Tage.</p>
-    <div class="zeile"><button id="ziel-testen">Testen</button><button class="haupt" id="ziel-los">Backup-Ziel übernehmen</button></div>
+    ${fuss(`<button id="ziel-testen">Testen</button><button class="${art}" id="ziel-los">Backup-Ziel übernehmen</button>`)}`;
 
-    <h2>3 · Sicherungsschlüssel</h2>
-    ${sp.schluessel ? `<div class="box ok">Eingerichtet (Kennung <code>${esc(sp.fingerabdruck)}</code>). Sicherungen sind damit verschlüsselt –
-        öffnen kann sie nur, wer das Wiederherstellungsblatt hat (oder die Plattform mit Ihrer Freigabe).</div>
-      ${sp.blatt ? '<div class="zeile"><button id="blatt-zeigen">Wiederherstellungsblatt anzeigen</button></div>' : ''}`
-    : nachInstallation ? '<div class="box warnung">Noch kein Schlüssel – im Studio unter Backup einrichten.</div>' : `
-      <p class="caption">Jede Sicherung wird verschlüsselt. Den Schlüssel dazu bekommen Sie einmal als Wiederherstellungsblatt
-        zum Ausdrucken; eine verschlüsselte Kopie bewahrt die Plattform auf. Hat Ihr Studio schon einen Schlüssel, gilt der weiter.</p>
-      <div class="zeile"><button class="haupt" id="schluessel-los">Schlüssel einrichten</button></div>`}
-    <div id="blatt"></div>
-
-    ${nachInstallation ? '' : `
-    <h2>4 · Neu beginnen oder wiederherstellen</h2>
-    ${sp.wiederherstellung?.wahl === 'sicherung' ? `<div class="box ok">Sicherung vom ${esc(datumZeit(sp.wiederherstellung.manifest?.erstellt))}
-        (Version ${esc(sp.wiederherstellung.manifest?.version)}) ist geladen und geprüft. Sie wird bei der Installation eingespielt.</div>`
-      : sp.wiederherstellung?.wahl === 'neu' ? '<div class="box ok">Studio beginnt mit leeren Daten.</div>' : ''}
-    <div class="wahl" id="wh-wahl">
-      <label data-wahl="neu"><input type="radio" name="wh" value="neu" ${sp.wiederherstellung?.wahl !== 'sicherung' ? 'checked' : ''}>
-        <span class="titel">Neu beginnen</span><span class="text">Für ein neues Studio oder einen zusätzlichen PC.</span></label>
-      <label data-wahl="sicherung"><input type="radio" name="wh" value="sicherung" ${sp.wiederherstellung?.wahl === 'sicherung' ? 'checked' : ''}>
-        <span class="titel">Aus einer Sicherung wiederherstellen</span><span class="text">Nach einem Defekt oder auf neuer Hardware.</span></label>
-    </div>
-    <div id="wh-sicherung" hidden><p class="caption">Lade Sicherungen …</p></div>
-    <div class="zeile"><button class="haupt" id="wh-los">Übernehmen</button></div>`}
-
-    <div id="meldung"></div>
-    <pre class="protokoll" id="protokoll" hidden></pre>
-    <div class="zeile"><button class="haupt" id="weiter" ${erledigt('speicher') && !nachInstallation ? '' : 'hidden'}>Weiter zur Installation</button></div>`;
-
-  // Datenspeicher
-  const datenSetzen = () => {
-    const w = $('input[name=daten]:checked')?.value;
-    document.querySelectorAll('#daten-wahl label').forEach((l) => l.classList.toggle('gewaehlt', l.dataset.wahl === w));
-    if ($('#daten-platte')) $('#daten-platte').hidden = w !== 'platte';
-    const p = frei.find((x) => x.name === $('#daten-geraet')?.value);
-    if ($('#daten-hinweis')) $('#daten-hinweis').innerHTML = !p ? '' : p.studio_daten
-      ? '<div class="box info">Auf dieser Platte liegt schon ein Studio-Datenspeicher. Er wird übernommen, nichts wird gelöscht.</div>'
-      : `<div class="box warnung"><b>Alles auf dieser Platte wird gelöscht.</b>${p.wechselbar ? ' Eine USB-Platte darf im Betrieb nicht abgezogen werden.' : ''}
-         <label class="feld"><span>Zum Bestätigen den Namen der Platte eintippen: <code>${esc(p.name)}</code></span><input type="text" id="daten-bestaetigung" autocomplete="off"></label></div>`;
-  };
-  document.querySelectorAll('input[name=daten]').forEach((r) => r.addEventListener('change', datenSetzen));
-  $('#daten-geraet')?.addEventListener('change', datenSetzen);
-  if ($('#daten-wahl')) datenSetzen();
-  knopf('#daten-los', async () => {
-    const art = pl.bestand ? 'bestand' : $('input[name=daten]:checked')?.value;
-    await api('/api/speicher/daten', { art, platte: $('#daten-geraet')?.value, bestaetigung: $('#daten-bestaetigung')?.value || '' });
-    auftragAbwarten(() => neuLaden('speicher'));
-  });
-
-  // Backup-Ziel
   const zielSetzen = () => {
     const w = $('input[name=ziel]:checked')?.value;
     document.querySelectorAll('#ziel-wahl label').forEach((l) => l.classList.toggle('gewaehlt', l.dataset.wahl === w));
@@ -499,26 +601,62 @@ async function speicher() {
   });
   knopf('#ziel-testen', async () => {
     await api('/api/speicher/ziel/testen', zielEingaben());
-    auftragAbwarten((e) => {
+    auftragAbwarten('Backup-Ziel wird getestet …', (e) => {
       $('#meldung').innerHTML = e?.formatieren_noetig ? '<div class="box warnung">Die Platte muss erst eingerichtet werden – „Übernehmen“ formatiert sie.</div>'
         : `<div class="box ok">Test bestanden${e?.frei != null ? ` – ${gb(e.frei)} frei` : ''}.</div>`;
     });
   });
   knopf('#ziel-los', async () => {
     await api('/api/speicher/ziel', zielEingaben());
-    auftragAbwarten(() => neuLaden('speicher'));
+    $('#fuss').hidden = true;
+    auftragAbwarten('Backup-Ziel wird eingerichtet …', () => {
+      if (stand.installiert) speicherHinweis = '<div class="box ok">Backup-Ziel übernommen.</div>';
+      speicherWeiter();
+    });
   });
+}
 
-  // Schlüssel
+function schluesselTeil(kopf, sp, nachInstallation, fuss, art) {
+  $('#inhalt').innerHTML = `${kopf}
+    <h2>Sicherungsschlüssel</h2>
+    ${sp.schluessel ? `<div class="box ok">Eingerichtet (Kennung <code>${esc(sp.fingerabdruck)}</code>). Sicherungen sind damit verschlüsselt –
+        öffnen kann sie nur, wer das Wiederherstellungsblatt hat (oder die Plattform mit Ihrer Freigabe).</div>
+      <div id="blatt"></div>
+      ${fuss(sp.blatt ? '<button id="blatt-zeigen">Wiederherstellungsblatt anzeigen</button>' : '')}`
+    : nachInstallation ? `<div class="box warnung">Noch kein Schlüssel – im Studio unter Backup einrichten.</div>${fuss()}` : `
+      <p class="caption">Jede Sicherung wird verschlüsselt. Den Schlüssel dazu bekommen Sie einmal als Wiederherstellungsblatt
+        zum Ausdrucken; eine verschlüsselte Kopie bewahrt die Plattform auf. Hat Ihr Studio schon einen Schlüssel, gilt der weiter.</p>
+      <div id="blatt"></div>
+      ${fuss(`<button class="${art}" id="schluessel-los">Schlüssel einrichten</button>`)}`}`;
   knopf('#schluessel-los', async () => {
     const r = await api('/api/sicherung/schluessel', {});
-    await neuLaden('speicher');
-    if (r.neu) await blattZeigen();
-    else $('#meldung').innerHTML = '<div class="box info">Ihr Studio hatte schon einen Sicherungsschlüssel – das Wiederherstellungsblatt von damals gilt weiter.</div>';
+    if (r.neu) {
+      // Neues Blatt: hier bleiben, bis es ausgedruckt ist – „Weiter“ führt dann zum nächsten Teil.
+      await speicherWeiter('schluessel');
+      await blattZeigen();
+    } else {
+      speicherHinweis = '<div class="box info">Ihr Studio hatte schon einen Sicherungsschlüssel – das Wiederherstellungsblatt von damals gilt weiter.</div>';
+      await speicherWeiter();
+    }
   });
   knopf('#blatt-zeigen', blattZeigen);
+}
 
-  // Neu oder Wiederherstellen
+async function wiederherstellungTeil(kopf, sp, fuss, art) {
+  $('#inhalt').innerHTML = `${kopf}
+    <h2>Neu beginnen oder wiederherstellen</h2>
+    ${sp.wiederherstellung?.wahl === 'sicherung' ? `<div class="box ok">Sicherung vom ${esc(datumZeit(sp.wiederherstellung.manifest?.erstellt))}
+        (Version ${esc(sp.wiederherstellung.manifest?.version)}) ist geladen und geprüft. Sie wird bei der Installation eingespielt.</div>`
+      : sp.wiederherstellung?.wahl === 'neu' ? '<div class="box ok">Studio beginnt mit leeren Daten.</div>' : ''}
+    <div class="wahl" id="wh-wahl">
+      <label data-wahl="neu"><input type="radio" name="wh" value="neu" ${sp.wiederherstellung?.wahl !== 'sicherung' ? 'checked' : ''}>
+        <span class="titel">Neu beginnen</span><span class="text">Für ein neues Studio oder einen zusätzlichen PC.</span></label>
+      <label data-wahl="sicherung"><input type="radio" name="wh" value="sicherung" ${sp.wiederherstellung?.wahl === 'sicherung' ? 'checked' : ''}>
+        <span class="titel">Aus einer Sicherung wiederherstellen</span><span class="text">Nach einem Defekt oder auf neuer Hardware.</span></label>
+    </div>
+    <div id="wh-sicherung" hidden><p class="caption">Lade Sicherungen …</p></div>
+    ${fuss(`<button class="${art}" id="wh-los">Übernehmen</button>`)}`;
+
   let liste = null;
   const whSetzen = async () => {
     const w = $('input[name=wh]:checked')?.value;
@@ -537,15 +675,15 @@ async function speicher() {
     }
   };
   document.querySelectorAll('input[name=wh]').forEach((r) => r.addEventListener('change', whSetzen));
-  if ($('#wh-wahl')) await whSetzen();
   knopf('#wh-los', async () => {
-    if ($('input[name=wh]:checked')?.value === 'neu') { await api('/api/wiederherstellung/neu', {}); await neuLaden('speicher'); return; }
+    if ($('input[name=wh]:checked')?.value === 'neu') { await api('/api/wiederherstellung/neu', {}); await speicherWeiter(); return; }
     const [quelle, ...rest] = ($('#wh-datei')?.value || '').split(':');
     if (!quelle) throw new Error('Keine Sicherung gewählt.');
     await api('/api/wiederherstellung/laden', { quelle, id: rest.join(':'), schluessel: $('#wh-schluessel').value, plattform: $('#wh-plattform').checked });
-    auftragAbwarten(() => neuLaden('speicher'));
+    $('#fuss').hidden = true;
+    auftragAbwarten('Sicherung wird geladen und geprüft …', () => speicherWeiter());
   });
-  knopf('#weiter', () => neuLaden());
+  await whSetzen();
 }
 
 function zielText(z) {
@@ -575,6 +713,7 @@ async function blattZeigen() {
     <div class="zeile"><button class="blau" id="drucken">Drucken</button>
       <span class="caption">Das Blatt bleibt bis zum Ende der Einrichtung abrufbar, danach nicht mehr.</span></div>`;
   $('#drucken').addEventListener('click', () => window.print());
+  $('#blatt-zeigen')?.remove();
 }
 
 function installation() {
@@ -584,11 +723,12 @@ function installation() {
     <p>Die Software wird geladen, geprüft und gestartet. Beim ersten Start richtet Studio seine Datenbank ein –
        das dauert einige Minuten. Bitte den PC so lange eingeschaltet lassen.</p>
     <div id="meldung"></div>
-    <div class="zeile"><button class="haupt" id="los" ${laeuft ? 'disabled' : ''}>Studio installieren</button></div>
-    <pre class="protokoll" id="protokoll"></pre>`;
-  const verfolgen = () => protokollVerfolgen(() => neuLaden('fertig'));
+    <div class="zeile"><button class="haupt" id="los" ${laeuft ? 'hidden' : ''}>Studio installieren</button></div>
+    ${laufBlock()}`;
+  const verfolgen = () => protokollVerfolgen('Studio wird installiert …', () => neuLaden('fertig'),
+    () => { $('#los').hidden = false; $('#los').textContent = 'Erneut versuchen'; });
   if (laeuft) verfolgen();
-  knopf('#los', async () => { await api('/api/installieren', {}); $('#los').disabled = true; verfolgen(); });
+  knopf('#los', async () => { await api('/api/installieren', {}); $('#los').hidden = true; verfolgen(); });
 }
 
 async function fertig() {
@@ -616,8 +756,9 @@ async function fertig() {
       <div class="zugang"><span>Benutzer</span><code>${esc(zugang.benutzer)}</code><span>Startpasswort</span><code>${esc(zugang.passwort)}</code></div>
       <div class="box warnung">Bitte notieren. Beim ersten Anmelden muss das Passwort geändert werden.</div>` : ''}
     <div class="zeile"><button class="haupt" id="zu-studio">Studio öffnen</button></div>
-    <p class="caption">Ab jetzt startet der PC direkt mit der Kasse im Vollbild. Alt+F4 schließt die Kasse und zeigt
-      die Übersicht dieses PCs, ein zweites Alt+F4 führt zum Schreibtisch. Das Studio-Icon öffnet die Kasse wieder.</p>`;
+    <p class="caption">Ab jetzt startet der PC direkt mit der Kasse im großen Fenster. Mit den Knöpfen oben rechts lässt es
+      sich minimieren oder verkleinern, F11 schaltet auf Vollbild. Alt+F4 schließt die Kasse und zeigt die Übersicht
+      dieses PCs, ein zweites Alt+F4 führt zum Schreibtisch. Das Studio-Icon öffnet die Kasse wieder.</p>`;
   knopf('#zu-studio', zuStudio);
 }
 
@@ -693,7 +834,7 @@ function zuruecksetzenFormular(v, ohneSicherungAnbieten = false) {
       (${esc(datumZeit(v.letzte_sicherung))}) gehen dabei verloren.</span></label>` : ''}
     <div id="meldung"></div>
     <div class="zeile"><button class="gefahr" id="zuruecksetzen-los">Alles löschen und neu einrichten</button></div>
-    <pre class="protokoll" id="protokoll" hidden></pre>`;
+    ${laufBlock()}`;
   knopf('#zuruecksetzen-los', async () => {
     await api('/api/verwaltung/anderes-studio', {
       login: $('#so-login').value, passwort: $('#so-passwort').value, bestaetigung: $('#so-name').value,
@@ -706,8 +847,7 @@ function zuruecksetzenFormular(v, ohneSicherungAnbieten = false) {
 
 function zuruecksetzenVerfolgen() {
   $('#zuruecksetzen-los') && ($('#zuruecksetzen-los').disabled = true);
-  $('#protokoll').hidden = false;
-  protokollVerfolgen((e) => {
+  protokollVerfolgen('Dieser PC wird zurückgesetzt …', (e) => {
     $('#zuruecksetzen').innerHTML = `
       <div class="box ok"><b>Erledigt.</b> Von ${esc(e?.studio_alt || 'dem bisherigen Studio')} ist nichts mehr auf diesem PC.
         ${e?.sicherung ? `Letzte Sicherung: ${esc(e.sicherung)}.` : ''}</div>

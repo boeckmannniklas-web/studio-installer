@@ -109,7 +109,9 @@ def _ausfuehren(befehl: list[str], log=None, *, eingabe: str | None = None, env:
         zeile = zeile.rstrip()
         zeilen.append(zeile)
         if log and zeile:
-            log(zeile)
+            # Eingerückt: Ausgabe eines Befehls. Die Oberfläche zeigt als aktuellen Schritt nur
+            # die eigenen Meldungen, die Ausgaben stehen in den zugeklappten Details.
+            log("  " + zeile)
     proc.wait()
     if pruefen and proc.returncode != 0:
         raise Fehler(f"Befehl fehlgeschlagen ({befehl[0]} {befehl[1] if len(befehl) > 1 else ''}), "

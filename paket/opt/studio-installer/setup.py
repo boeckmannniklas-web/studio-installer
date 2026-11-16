@@ -57,6 +57,12 @@ def token_ablegen() -> None:
 
 
 # ── Hintergrundauftrag ────────────────────────────────────────────────────────
+def ist_meldung(zeile: str) -> bool:
+    """Eigene Meldung eines Schritts („Lade … “) – nicht der Befehl ($ …), nicht seine eingerückte
+    Ausgabe, kein Stacktrace. Nur solche Zeilen zeigt die Oberfläche ohne aufgeklappte Details."""
+    return bool(zeile.strip()) and not zeile.startswith(("$ ", " ", "\t", "Traceback"))
+
+
 class Auftrag:
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -65,17 +71,21 @@ class Auftrag:
         self.fehler: str | None = None
         self.ergebnis: dict | None = None
         self.zeilen: list[str] = []
+        self.schritt: str | None = None   # letzte eigene Meldung – nicht Befehl oder Befehlsausgabe
 
     def log(self, zeile: str) -> None:
         with self.lock:
             self.zeilen.append(zeile)
             del self.zeilen[:-5000]
+            if ist_meldung(zeile):
+                self.schritt = zeile.strip()
 
     def starten(self, name: str, arbeit) -> None:
         with self.lock:
             if self.laeuft:
                 raise schritte.Fehler(f"Es läuft schon: {self.name}.")
             self.name, self.laeuft, self.fehler, self.ergebnis, self.zeilen = name, True, None, None, []
+            self.schritt = None
 
         def lauf():
             try:
@@ -99,7 +109,8 @@ class Auftrag:
     def stand(self, seit: int = 0) -> dict:
         with self.lock:
             return {"name": self.name, "laeuft": self.laeuft, "fehler": self.fehler,
-                    "ergebnis": self.ergebnis, "zeilen": self.zeilen[seit:], "gesamt": len(self.zeilen)}
+                    "ergebnis": self.ergebnis, "zeilen": self.zeilen[seit:], "gesamt": len(self.zeilen),
+                    "schritt": self.schritt}
 
 
 AUFTRAG = Auftrag()

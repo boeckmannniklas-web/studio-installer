@@ -1,7 +1,7 @@
 #!/bin/sh
 # Einrichtungs-Assistent erneut öffnen, auch wenn Studio schon installiert ist
 # (z. B. Fernwartung, Backup-Ziel oder Updates nachträglich ändern). Braucht ein
-# Administrator-Konto. Öffnet im Kioskmodus wie das Studio-Icon.
+# Administrator-Konto. Öffnet als App-Fenster wie das Studio-Icon.
 . /usr/lib/studio-installer/kiosk.sh
 
 pkexec /bin/systemctl start studio-setup.service || exit 1

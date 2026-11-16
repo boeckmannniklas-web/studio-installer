@@ -1,5 +1,5 @@
 #!/bin/sh
-# Kasse im Vollbild mit Verwaltungsfenster. Läuft als eigene Benutzer-Unit (starten in kiosk.sh):
+# Kasse im App-Fenster mit Verwaltungsfenster. Läuft als eigene Benutzer-Unit (starten in kiosk.sh):
 #
 #   Studio  --Alt+F4-->  Verwaltung dieses PCs  --Alt+F4-->  Schreibtisch
 #

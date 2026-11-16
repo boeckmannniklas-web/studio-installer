@@ -1,7 +1,7 @@
 [Unit]
-Description=Studio nach der Anmeldung im Kioskmodus öffnen (nur Studio-Image)
+Description=Studio nach der Anmeldung als App-Fenster öffnen (nur Studio-Image)
 # Nur auf dem Studio-Image (/etc/studio-os): wer den Installer per Einzeiler auf einen
-# vorhandenen PC holt, bekommt kein Vollbild aufgezwungen. Dort öffnet das Icon.
+# vorhandenen PC holt, bekommt die Kasse nicht beim Anmelden aufgezwungen. Dort öffnet das Icon.
 ConditionPathExists=/etc/studio-os
 After=graphical-session.target studio-schreibtisch.service
 PartOf=graphical-session.target

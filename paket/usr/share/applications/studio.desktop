@@ -8,3 +8,4 @@ Icon=studio
 Terminal=false
 Categories=Office;Finance;
 StartupNotify=false
+StartupWMClass=studio

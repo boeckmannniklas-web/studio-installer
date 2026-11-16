@@ -8,6 +8,8 @@
   --danger: #d13b3b; --danger-soft: #fdecec;
 }
 * { box-sizing: border-box; }
+/* hidden muss auch gegen display-Regeln (button, .zeile) gewinnen */
+[hidden] { display: none !important; }
 html, body { margin: 0; }
 body {
   background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif;
@@ -111,3 +113,41 @@ ol.liste { margin: 6px 0 8px; padding-left: 20px; }
 ol.liste li { margin: 3px 0; }
 .feld.ankreuzen { display: flex; gap: 10px; align-items: flex-start; }
 .feld.ankreuzen > span { margin: 0; font-weight: 400; color: var(--danger); }
+
+/* Laufender Auftrag: eine Anzeige, Protokoll zugeklappt */
+.lauf { margin-top: 16px; border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; background: var(--surface-muted); }
+.lauf-kopf { display: flex; align-items: center; gap: 12px; }
+.lauf-kopf > div { flex: 1; min-width: 0; }
+.lauf-kopf b { display: block; font-size: 14px; }
+.lauf-schritt { display: block; margin-top: 2px; font-size: 12.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lauf-zeit { white-space: nowrap; }
+.kreis {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--primary-rand); border-top-color: var(--primary);
+  animation: drehen .9s linear infinite;
+}
+@keyframes drehen { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .kreis { animation-duration: 3s; } }
+.lauf.fertig .kreis, .lauf.fehler .kreis {
+  animation: none; border: none; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px;
+}
+.lauf.fertig .kreis { background: var(--success-soft); color: var(--success); }
+.lauf.fertig .kreis::after { content: '✓'; }
+.lauf.fehler .kreis { background: var(--danger-soft); color: var(--danger); }
+.lauf.fehler .kreis::after { content: '!'; }
+.details { margin-top: 10px; }
+.details summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--text-2); user-select: none; }
+.details summary:hover { color: var(--primary); }
+.details pre.protokoll { margin-top: 8px; }
+
+/* Unterpunkte von „Speicher & Sicherung“ in der Seitenleiste */
+.schritte li.unterpunkte { display: block; padding: 2px 0 6px 34px; }
+.schritte li.unterpunkte ol { list-style: none; margin: 0; padding: 0; border: none; background: none; border-left: 2px solid var(--border); }
+.schritte li.unterpunkte li {
+  padding: 4px 8px 4px 10px; border-radius: 0 8px 8px 0; font-size: 12px; font-weight: 500; color: var(--muted); gap: 7px;
+  margin-left: -2px; border-left: 2px solid transparent;
+}
+.schritte li.unterpunkte li.erreichbar { cursor: pointer; color: var(--text-2); }
+.schritte li.unterpunkte li.erreichbar:hover { color: var(--primary); }
+.schritte li.unterpunkte li.jetzt { color: var(--primary); font-weight: 700; border-left-color: var(--primary); background: var(--primary-soft); }
+.schritte li.unterpunkte .mini { font-size: 10.5px; min-width: 12px; text-align: center; }
+.schritte li.unterpunkte li.erledigt:not(.jetzt) .mini { color: var(--success); font-weight: 800; }
