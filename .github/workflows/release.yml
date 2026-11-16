@@ -32,7 +32,8 @@ jobs:
           python3 -m unittest discover -s test -v
           shellcheck -S warning install.sh baue-deb.sh iso/baue-iso.sh iso/veroeffentlichen.sh test/vm-test.sh \
             paket/usr/bin/studio paket/usr/bin/studio-einrichtung paket/usr/bin/studio-betrieb \
-            paket/usr/lib/studio-installer/schreibtisch.sh paket/usr/lib/studio-installer/kiosk.sh
+            paket/usr/lib/studio-installer/schreibtisch.sh paket/usr/lib/studio-installer/kiosk.sh \
+            paket/usr/lib/studio-installer/kiosk-schleife.sh
 
       - name: .deb bauen
         run: |
