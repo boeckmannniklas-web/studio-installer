@@ -134,7 +134,9 @@ Abmeldung von Kasse/TSE beim Finanzamt und den alten Rechner in der Tailscale-Ve
 - **Update:** Es kommt nur eine von der Cloud signierte, für den Ring des Studios freigegebene Version.
   Läuft ein Verkauf, startet kein Update. Vorher wird gesichert. Antwortet die neue Version nicht, geht es
   auf die alte zurück, notfalls samt Datenbank. Auch dieses Paket aktualisiert sich selbst (Prüfsumme aus
-  `SHA256SUMS`).
+  `SHA256SUMS`), und zwar ab 0.5.1 **vor** jedem Studio-Update, auch bei „Jetzt aktualisieren“ im Studio:
+  Eine neue Studio-Version kann neuen Installer-Code brauchen. Das Update läuft dann im neuen Installer weiter.
+  Bis 0.5.0 holte nur der nächtliche Lauf den Installer, und erst nach dem Studio-Update.
 - **Datenbank mit pgvector (ab 0.5.0, Studio ab 0.53.0):** Nennt das Edge-Paket in `images.json` ein
   Datenbank-Image (`ghcr.io/…/studio-db@sha256:…`), lädt der Installer es bei Neuinstallation und Update und
   trägt es als `STUDIO_DB_IMAGE` in die `.env` ein. Die Datenbank startet dabei einmal neu. Er stellt nicht um,
@@ -143,12 +145,16 @@ Abmeldung von Kasse/TSE beim Finanzamt und den alten Rechner in der Tailscale-Ve
   Protokoll, und Studio läuft wie bisher, nur die Wissens-App lässt sich nicht installieren. Scheitert das Update,
   bleibt das neue Image, solange die alte Version damit startet. Die Probe-Wiederherstellung nimmt das Image der
   laufenden Datenbank (bis 0.4.0 immer `postgres:16-alpine`, Sicherungen mit Wissen fielen dort durch).
+- **Datenbank nachziehen (ab 0.5.1):** Kam Studio 0.53.0 mit einem älteren Installer auf den PC, fehlt das
+  Datenbank-Image in der `.env`. Der nächtliche Lauf holt es nach (Sicherung, Image eintragen, Neustart; startet
+  Studio nicht, kommt das bisherige Image zurück). Sofort: `sudo studio-betrieb datenbank-nachziehen`.
 - **Betriebssystem:** Sicherheitsupdates laufen über unattended-upgrades. Ein Neustart und Snap-Updates
   (Firefox im Kiosk) laufen nur im Wartungsfenster.
 - Studio im Container und dieser Dienst reden über `/var/lib/studio-austausch` (im Container
   `/data/host`). Das bindet `/opt/studio/compose.lokal.yml` ein, die der Installer erzeugt.
 
 Von Hand: `sudo studio-betrieb sichern`, `sudo studio-betrieb update-pruefen`, `sudo studio-betrieb status`,
+`sudo studio-betrieb update` (holt vorher den Installer), `sudo studio-betrieb datenbank-nachziehen`,
 `sudo studio-betrieb anderes-studio`.
 
 ### Sicherheit

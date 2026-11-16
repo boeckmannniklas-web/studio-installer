@@ -667,18 +667,25 @@ def update_pruefen(log=log_stdout, *, ausfuehren_erlaubt: bool = True) -> dict:
     zustand_aendern(update={"letzte_pruefung": iso(), "pruef_fehler": None, "verfuegbar": verfuegbar,
                             "automatisch": automatisch})
     cfg = updates_config()
-    if (ausfuehren_erlaubt and automatisch and cfg["modus"] == "automatisch"
+    if not (ausfuehren_erlaubt and cfg["modus"] == "automatisch"
             and im_fenster(jetzt(), cfg["fenster_von"], cfg["fenster_bis"])):
+        return {"verfuegbar": verfuegbar, "automatisch": automatisch}
+    if automatisch:
+        # update_ausfuehren holt zuerst den Installer (bis 0.5.0 kam er erst nach dem Studio-Update).
         log(f"Automatisches Update auf {automatisch} im Wartungsfenster.")
         try:
             update_ausfuehren(automatisch, log, anlass="automatisch")
         except Fehler as exc:
             log(f"Automatisches Update nicht ausgeführt: {exc}")
-    if ausfuehren_erlaubt and cfg["modus"] == "automatisch" and im_fenster(jetzt(), cfg["fenster_von"], cfg["fenster_bis"]):
-        try:
-            installer_aktualisieren(log)
-        except Fehler as exc:
-            log(f"Installer-Update nicht ausgeführt: {exc}")
+        return {"verfuegbar": verfuegbar, "automatisch": automatisch}
+    try:
+        if installer_aktualisieren(log):
+            # Der neue Installer prüft selbst, ob die Datenbank nachzuziehen ist.
+            _im_neuen_installer(["datenbank-nachziehen"], log)
+        elif datenbank_nachzuziehen():
+            datenbank_nachziehen(log)
+    except Fehler as exc:
+        log(f"Installer-Update oder Datenbank nicht ausgeführt: {exc}")
     return {"verfuegbar": verfuegbar, "automatisch": automatisch}
 
 
@@ -687,6 +694,18 @@ def _vorherige_konfig(version: str) -> Path:
 
 
 def update_ausfuehren(version: str | None = None, log=log_stdout, *, anlass: str = "manuell") -> dict:
+    # Erst der Installer: Eine neue Studio-Version kann neuen Installer-Code brauchen (Studio 0.53.0 bekommt die
+    # Datenbank mit pgvector nur von Installer ab 0.5.0). Bis 0.5.0 holte nur der nächtliche Lauf den Installer,
+    # und das erst nach dem Studio-Update – „Jetzt aktualisieren“ nie.
+    if os.environ.get(INSTALLER_FRISCH) != "1":
+        try:
+            neuer_installer = installer_aktualisieren(log)
+        except Fehler as exc:
+            log(f"WARNUNG: Installer-Update nicht ausgeführt ({exc}) – das Studio-Update läuft mit "
+                f"Installer {_installer_version()}.")
+            neuer_installer = False
+        if neuer_installer:
+            return _im_neuen_installer(["update", "--anlass", anlass, *(["--version", version] if version else [])], log)
     with sperre("update"):
         antwort = _cloud("GET", "/api/v1/edge/updates")
         kandidaten = []
@@ -891,6 +910,90 @@ INSTALLER_QUELLE = os.environ.get(
     "https://github.com/boeckmannniklas-web/studio-installer/releases/latest/download")
 
 
+#: Gesetzt im Prozess, den _im_neuen_installer startet: dort nicht noch einmal nach dem Installer fragen.
+INSTALLER_FRISCH = "STUDIO_INSTALLER_FRISCH"
+STUDIO_BETRIEB = "/usr/bin/studio-betrieb"
+
+
+def _im_neuen_installer(argumente: list[str], log) -> dict:
+    """Den Rest im eben eingespielten Installer ausführen. Dieser Prozess hat noch den alten Code geladen –
+    ein Update damit fortzusetzen hieße, mit dem alten Installer zu arbeiten, obwohl der neue schon da ist."""
+    log("Weiter mit dem neuen Installer …")
+    fd, pfad = tempfile.mkstemp(prefix="studio-ergebnis-", suffix=".json")
+    os.close(fd)
+    try:
+        with subprocess.Popen([STUDIO_BETRIEB, *argumente, "--ergebnis", pfad], stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, text=True, env={**os.environ, INSTALLER_FRISCH: "1"}) as proc:
+            for zeile in proc.stdout:
+                if zeile.rstrip():
+                    log(zeile.rstrip())
+        try:
+            ergebnis = json.loads(Path(pfad).read_text() or "{}")
+        except (OSError, ValueError):
+            ergebnis = {}
+    finally:
+        Path(pfad).unlink(missing_ok=True)
+    if proc.returncode != 0 or not ergebnis.get("ok"):
+        raise Fehler(ergebnis.get("fehler") or f"Der neue Installer brach ab (Rückgabe {proc.returncode}).")
+    return ergebnis.get("ergebnis") or {}
+
+
+# ── Datenbank nachziehen ──────────────────────────────────────────────────────
+def _paket_db_ref() -> str | None:
+    try:
+        ref = str((json.loads((schritte.ZIEL / "images.json").read_text()).get("db") or {}).get("ref") or "")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return ref if schritte.DB_REF.match(ref) else None
+
+
+def datenbank_nachzuziehen() -> bool:
+    """Das Paket der laufenden Version nennt ein Datenbank-Image, die .env noch nicht. So steht es, wenn Studio
+    0.53.0 mit einem Installer vor 0.5.0 eingespielt wurde. Ein eigener Eintrag von Hand bleibt, und ein Image,
+    das schon einmal abgelehnt wurde (andere PostgreSQL-Version), wird nicht jede Nacht neu versucht."""
+    ref = _paket_db_ref()
+    if not ref:
+        return False
+    eingetragen = _env().get("STUDIO_DB_IMAGE", "")
+    if eingetragen == ref or (eingetragen and not schritte.DB_REF.match(eingetragen)):
+        return False
+    return (zustand().get("datenbank") or {}).get("abgelehnt") != ref
+
+
+def datenbank_nachziehen(log=log_stdout) -> dict:
+    """Datenbank-Image des laufenden Pakets eintragen und die Datenbank damit neu starten – mit Sicherung vorher.
+    Startet Studio danach nicht, kommt das bisherige Image zurück."""
+    with sperre("update"):
+        if not datenbank_nachzuziehen():
+            log("Datenbank-Image ist aktuell – nichts zu tun.")
+            return {"db_image": None}
+        version = _installierte_version() or "?"
+        offen = offene_vorgaenge()
+        if offen:
+            raise Fehler(f"An der Kasse läuft gerade ein Verkauf ({offen} offen). Bitte erst abschließen.")
+        registry = _cloud("GET", "/api/v1/edge/updates")["registry"]
+        vorher = _env().get("STUDIO_DB_IMAGE") or None
+        log(f"Studio {version}: Datenbank mit pgvector nachziehen (der Installer kam nach dem Studio-Update).")
+        try:
+            sichern("update", log)
+        except Fehler as exc:
+            raise Fehler(f"Ohne Sicherung keine Umstellung der Datenbank: {exc}") from exc
+        ref = schritte.db_image_einsetzen(registry, log)
+        if not ref:
+            zustand_aendern(datenbank={"abgelehnt": _paket_db_ref(), "am": iso()})
+            return {"db_image": None}
+        _ausfuehren(schritte._compose("up", "-d", "--no-build"), log, cwd=schritte.ZIEL)
+        if not _laeuft_mit(version, 420):
+            log("FEHLER: Studio startet mit dem neuen Datenbank-Image nicht – zurück auf das bisherige.")
+            schritte.env_setzen({"STUDIO_DB_IMAGE": vorher})
+            _ausfuehren(schritte._compose("up", "-d", "--no-build"), log, cwd=schritte.ZIEL, pruefen=False)
+            zustand_aendern(datenbank={"abgelehnt": ref, "am": iso()})
+            raise Fehler("Die Datenbank mit pgvector startete nicht; das bisherige Image ist wieder eingetragen.")
+        zustand_aendern(datenbank={"abgelehnt": None, "umgestellt": iso(), "image": ref})
+        log("Datenbank läuft mit pgvector. Die Wissens-App lässt sich jetzt im App-Store installieren.")
+        return {"db_image": ref}
+
+
 def installer_aktualisieren(log) -> bool:
     """Neuere Fassung dieses Pakets einspielen. Prüfsumme aus SHA256SUMS des Releases."""
     # Nicht mitten in „Für ein anderes Studio einrichten“: das Paket startet den Dienst neu.
@@ -1039,6 +1142,20 @@ def _anderes_studio_terminal(ohne_sicherung: bool) -> int:
     return 0
 
 
+def _mit_ergebnis(datei: str | None, arbeit) -> int:
+    """Für _im_neuen_installer: Ergebnis oder Fehler als JSON in die Datei des aufrufenden Prozesses."""
+    try:
+        ergebnis = {"ok": True, "ergebnis": arbeit()}
+    except Fehler as exc:
+        ergebnis = {"ok": False, "fehler": str(exc)}
+    if datei:
+        Path(datei).write_text(json.dumps(ergebnis, default=str))
+    if not ergebnis["ok"]:
+        print(f"FEHLER: {ergebnis['fehler']}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str]) -> int:
     import argparse
     p = argparse.ArgumentParser(prog="studio-betrieb", description="Sicherung, Updates und Aufträge des Studio-Edge")
@@ -1046,8 +1163,13 @@ def main(argv: list[str]) -> int:
     s = unter.add_parser("sichern", help="jetzt sichern")
     s.add_argument("--anlass", default="manuell", choices=["nacht", "manuell", "update", "kassenabschluss"])
     unter.add_parser("update-pruefen", help="bei der Cloud nach Updates fragen (Automatik im Wartungsfenster)")
-    u = unter.add_parser("update", help="Update jetzt einspielen")
+    u = unter.add_parser("update", help="Update jetzt einspielen (holt vorher den neuesten Installer)")
     u.add_argument("--version")
+    u.add_argument("--anlass", default="manuell", choices=["manuell", "automatisch"])
+    u.add_argument("--ergebnis", help=argparse.SUPPRESS)
+    d = unter.add_parser("datenbank-nachziehen",
+                         help="Datenbank-Image des laufenden Pakets eintragen (Installer kam nach dem Studio-Update)")
+    d.add_argument("--ergebnis", help=argparse.SUPPRESS)
     unter.add_parser("auftraege", help="Anforderungen aus dem Studio abarbeiten")
     unter.add_parser("status", help="Zustand ausgeben und für das Studio ablegen")
     unter.add_parser("nachruesten", help="ältere Installation an Sicherung und Updates anschließen")
@@ -1064,7 +1186,9 @@ def main(argv: list[str]) -> int:
         elif a.befehl == "update-pruefen":
             update_pruefen()
         elif a.befehl == "update":
-            update_ausfuehren(a.version)
+            return _mit_ergebnis(a.ergebnis, lambda: update_ausfuehren(a.version, anlass=a.anlass))
+        elif a.befehl == "datenbank-nachziehen":
+            return _mit_ergebnis(a.ergebnis, datenbank_nachziehen)
         elif a.befehl == "auftraege":
             auftraege()
         elif a.befehl == "nachruesten":
