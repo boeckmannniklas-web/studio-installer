@@ -653,6 +653,7 @@ asyncio.run(m())
 
 def installieren(log) -> dict:
     import betrieb
+    import kidienste
     import speicher
     a = _aktivierung()
     f = _fernwartung()
@@ -698,6 +699,8 @@ def installieren(log) -> dict:
     speicher.compose_lokal_schreiben()
     # Vor dem Einspielen einer Sicherung: Ein Dump eines Studios mit Wissen lässt sich nur mit pgvector einspielen.
     db_image_einsetzen(registry, log)
+    # PII-Gate für das Profil ki (Studio ab 0.53.1). Eingeschaltet wird ki erst, wenn Studio läuft und die Rollen stehen.
+    kidienste.pii_laden(registry, log)
     if wahl["wahl"] == "sicherung":
         sicherung_einspielen(wahl, log)
     if f["wahl"] == "plattform":
@@ -708,7 +711,8 @@ def installieren(log) -> dict:
         except Fehler as exc:
             log(f"WARNUNG: Kein Schlüssel für die Fernwartung ({exc}). Studio startet trotzdem.")
     log("Studio starten …")
-    _ausfuehren(_compose("up", "-d", "--no-build", "--remove-orphans"), log, cwd=ZIEL)
+    # Ohne Profil ki: Worker und Läufer starten erst, wenn die API migriert hat und rollen.sh ihre Rollen angelegt hat (kidienste.py).
+    _ausfuehren(_compose("up", "-d", "--no-build", "--remove-orphans"), log, cwd=ZIEL, env=kidienste.ohne_ki())
 
     log("Warte, bis Studio antwortet (beim ersten Start richtet es die Datenbank ein) …")
     info = _warten(lambda: _http_ok("http://127.0.0.1/api/v1/system/info"), 420)
@@ -738,6 +742,8 @@ def installieren(log) -> dict:
             log("WARNUNG: Tailscale hat sich nicht angemeldet – Studio läuft trotzdem. "
                 "Schlüssel prüfen (abgelaufen? schon verbraucht?).")
 
+    ki = kidienste.einrichten(log)
+
     log("Sicherung und Updates einschalten …")
     _ausfuehren(["systemctl", "enable", "--now", "studio-sicherung.timer", "studio-update.timer",
                  "studio-auftrag.path"], log, pruefen=False)
@@ -745,7 +751,7 @@ def installieren(log) -> dict:
 
     zugang = anmeldedaten()
     ergebnis = {"version": version, "studio": a["tenant_name"], "lizenz_aktiv": bool(lizenz),
-                "fernwartung": f["wahl"], "tailscale": tailscale,
+                "fernwartung": f["wahl"], "tailscale": tailscale, "ki": ki.get("ki"),
                 "wiederhergestellt": wahl.get("manifest", {}).get("erstellt") if wahl["wahl"] == "sicherung" else None,
                 "installiert_at": datetime.now(timezone.utc).isoformat()}
     _sicher_schreiben(ZIEL / "installiert.json", json.dumps(ergebnis, indent=2), 0o644)
@@ -945,6 +951,11 @@ def sicherung_einspielen(wahl: dict, log) -> None:
     if leer not in ("0", ""):
         raise Fehler("Die Datenbank auf diesem PC ist nicht leer – eine Sicherung wird nur in eine frische "
                      "Installation eingespielt.")
+    # Eine Sicherung eines Studios mit KI-Diensten vergibt Rechte an studio_worker/studio_laeufer. Die Rollen gehören dem Cluster,
+    # nicht der Sicherung: ohne sie bricht pg_restore mit „role … does not exist“ ab. rollen.sh macht sie später fertig.
+    import kidienste
+    kidienste.rollen_vorab(lambda sql: _ausfuehren(_compose("exec", "-T", "db", "psql", "-U", "studio", "-d", "studio", "-v",
+                                                            "ON_ERROR_STOP=1", "-c", sql), log, cwd=ZIEL))
     log("Datenbank aus der Sicherung einspielen …")
     with open(inhalt / "db.dump", "rb") as ein:
         proc = subprocess.run(_compose("exec", "-T", "db", "pg_restore", "-U", "studio", "-d", "studio",

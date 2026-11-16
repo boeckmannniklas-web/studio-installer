@@ -47,6 +47,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import kidienste  # noqa: E402
 import schritte  # noqa: E402
 import speicher  # noqa: E402
 from schritte import Fehler, _ausfuehren, _sicher_schreiben  # noqa: E402
@@ -178,6 +179,8 @@ def status_schreiben(z: dict | None = None) -> None:
             "laeuft": upd.get("laeuft"), "verlauf": (upd.get("verlauf") or [])[:VERLAUF_MAX],
         },
         "auftraege": z.get("auftraege") or {},
+        # KI-Dienste (Profil ki, kidienste.py): Stand der letzten Einrichtung
+        "ki": z.get("ki") or {},
     }
     try:
         speicher.austausch_anlegen()
@@ -358,6 +361,9 @@ def probe_wiederherstellung(dump: Path, log) -> dict:
         if not bereit:
             raise Fehler("Die Wegwerf-Datenbank startet nicht.")
         time.sleep(2)
+        # Rollen der KI-Dienste wie auf einem neuen Server: Die Sicherung vergibt Rechte an sie (kidienste.ROLLEN).
+        kidienste.rollen_vorab(lambda sql: _ausfuehren(["docker", "exec", name, "psql", "-U", "studio", "-d", "studio", "-v",
+                                                        "ON_ERROR_STOP=1", "-c", sql], log))
         with open(dump, "rb") as ein:
             proc = subprocess.run(["docker", "exec", "-i", name, "pg_restore", "-U", "studio", "-d", "studio",
                                    "--no-owner", "--exit-on-error"], stdin=ein, capture_output=True)
@@ -679,13 +685,21 @@ def update_pruefen(log=log_stdout, *, ausfuehren_erlaubt: bool = True) -> dict:
             log(f"Automatisches Update nicht ausgeführt: {exc}")
         return {"verfuegbar": verfuegbar, "automatisch": automatisch}
     try:
-        if installer_aktualisieren(log):
-            # Der neue Installer prüft selbst, ob die Datenbank nachzuziehen ist.
-            _im_neuen_installer(["datenbank-nachziehen"], log)
-        elif datenbank_nachzuziehen():
-            datenbank_nachziehen(log)
+        neuer_installer = installer_aktualisieren(log)
     except Fehler as exc:
-        log(f"Installer-Update oder Datenbank nicht ausgeführt: {exc}")
+        log(f"Installer-Update nicht ausgeführt: {exc}")
+        neuer_installer = False
+    # Der neue Installer prüft selbst, ob Datenbank und KI-Dienste nachzuziehen sind. Jedes für sich: Scheitert die Datenbank,
+    # kommen die KI-Dienste trotzdem dran.
+    for befehl, noetig, ausfuehren in ((["datenbank-nachziehen"], datenbank_nachzuziehen, datenbank_nachziehen),
+                                       (["ki-einrichten", "--wenn-noetig"], ki_nachzuziehen, ki_einrichten)):
+        try:
+            if neuer_installer:
+                _im_neuen_installer(befehl, log)
+            elif noetig():
+                ausfuehren(log)
+        except Fehler as exc:
+            log(f"{befehl[0]} nicht ausgeführt: {exc}")
     return {"verfuegbar": verfuegbar, "automatisch": automatisch}
 
 
@@ -755,13 +769,21 @@ def update_ausfuehren(version: str | None = None, log=log_stdout, *, anlass: str
             # gibt es nicht; die Datenbank startet beim folgenden up einmal neu.
             zustand_aendern(update={"laeuft": {"nach": neu, "start": iso(start), "schritt": "Datenbank"}})
             eintrag["db_image"] = schritte.db_image_einsetzen(antwort["registry"], log)
-            # 4. Starten und prüfen
+            # PII-Gate des Pakets (Studio ab 0.53.1); scheitert nie das Update
+            kidienste.pii_laden(antwort["registry"], log)
+            # 4. Starten und prüfen. Worker und Läufer stehen, solange die neue Version migriert (kidienste.py, Reihenfolge).
             zustand_aendern(update={"laeuft": {"nach": neu, "start": iso(start), "schritt": "Start"}})
-            _ausfuehren(schritte._compose("up", "-d", "--no-build", "--remove-orphans"), log, cwd=schritte.ZIEL)
+            if kidienste.an():
+                kidienste.anhalten(log)
+            _ausfuehren(schritte._compose("up", "-d", "--no-build", "--remove-orphans"), log, cwd=schritte.ZIEL,
+                        env=kidienste.ohne_ki())
             if not _laeuft_mit(neu, 420):
                 raise Fehler(f"Version {neu} antwortet nicht.")
             eintrag["ok"] = True
             log(f"Update auf {neu} fertig.")
+            # 5. KI-Dienste: Rollen, Profil ki, Prüfung. Ein Fehler hier nimmt nur ki zurück, nicht das Update.
+            zustand_aendern(update={"laeuft": {"nach": neu, "start": iso(start), "schritt": "KI-Dienste"}})
+            eintrag["ki"] = _ki_merken(kidienste.einrichten(log), neu)
             _aufraeumen_vor_update(behalten=alt)
             return eintrag
         except Fehler as exc:
@@ -886,6 +908,8 @@ def datenbank_einspielen(dump: Path, log) -> None:
     _ausfuehren(schritte._compose("exec", "-T", "db", "dropdb", "-U", "studio", "--if-exists", "studio"), log,
                 cwd=schritte.ZIEL)
     _ausfuehren(schritte._compose("exec", "-T", "db", "createdb", "-U", "studio", "studio"), log, cwd=schritte.ZIEL)
+    kidienste.rollen_vorab(lambda sql: _ausfuehren(schritte._compose("exec", "-T", "db", "psql", "-U", "studio", "-d", "studio", "-v",
+                                                                     "ON_ERROR_STOP=1", "-c", sql), log, cwd=schritte.ZIEL))
     with open(dump, "rb") as ein:
         proc = subprocess.run(schritte._compose("exec", "-T", "db", "pg_restore", "-U", "studio", "-d", "studio",
                                                 "--no-owner", "--exit-on-error"),
@@ -992,6 +1016,39 @@ def datenbank_nachziehen(log=log_stdout) -> dict:
         zustand_aendern(datenbank={"abgelehnt": None, "umgestellt": iso(), "image": ref})
         log("Datenbank läuft mit pgvector. Die Wissens-App lässt sich jetzt im App-Store installieren.")
         return {"db_image": ref}
+
+
+# ── KI-Dienste nachziehen ─────────────────────────────────────────────────────
+def _ki_merken(ergebnis: dict, version: str | None) -> str | None:
+    zustand_aendern(ki={**ergebnis, "version": version, "am": iso()})
+    return ergebnis.get("ki")
+
+
+def ki_nachzuziehen() -> bool:
+    """Das Paket der laufenden Version kann die KI-Dienste, sie laufen aber nicht. Eine Einrichtung, die mit dieser Studio-Version
+    schon gescheitert ist, versucht die Nacht nicht jedes Mal neu (von Hand: studio-betrieb ki-einrichten)."""
+    if not kidienste.nachzuziehen():
+        return False
+    z = zustand().get("ki") or {}
+    return not (z.get("ki") == "fehler" and z.get("version") == _installierte_version())
+
+
+def ki_einrichten(log=log_stdout, *, wenn_noetig: bool = False) -> dict:
+    """KI-Dienste der laufenden Version einrichten: PII-Gate laden, wenn es fehlt, dann Rollen, Profil ki und Prüfung.
+    `wenn_noetig` (Nachtlauf im eben geholten Installer): nur, wenn ki_nachzuziehen() es verlangt."""
+    if wenn_noetig and not ki_nachzuziehen():
+        log("KI-Dienste sind eingerichtet – nichts zu tun.")
+        return {"ki": None}
+    with sperre("update"):
+        version = _installierte_version()
+        if not _laeuft_mit(version or "", 30):
+            raise Fehler("Studio antwortet nicht – die KI-Dienste werden erst eingerichtet, wenn es läuft.")
+        if kidienste.pii_eintrag() and not kidienste.pii_bereit():
+            kidienste.pii_laden(_cloud("GET", "/api/v1/edge/updates")["registry"], log)
+        ergebnis = kidienste.einrichten(log)
+        _ki_merken(ergebnis, version)
+        status_schreiben()
+        return ergebnis
 
 
 def installer_aktualisieren(log) -> bool:
@@ -1170,6 +1227,10 @@ def main(argv: list[str]) -> int:
     d = unter.add_parser("datenbank-nachziehen",
                          help="Datenbank-Image des laufenden Pakets eintragen (Installer kam nach dem Studio-Update)")
     d.add_argument("--ergebnis", help=argparse.SUPPRESS)
+    k = unter.add_parser("ki-einrichten",
+                         help="KI-Dienste (Worker, App-Läufer, PII-Gate) mit eigenen Datenbankrollen einrichten und prüfen")
+    k.add_argument("--wenn-noetig", action="store_true", help="nur, wenn sie noch nicht laufen (nächtlicher Lauf)")
+    k.add_argument("--ergebnis", help=argparse.SUPPRESS)
     unter.add_parser("auftraege", help="Anforderungen aus dem Studio abarbeiten")
     unter.add_parser("status", help="Zustand ausgeben und für das Studio ablegen")
     unter.add_parser("nachruesten", help="ältere Installation an Sicherung und Updates anschließen")
@@ -1189,6 +1250,8 @@ def main(argv: list[str]) -> int:
             return _mit_ergebnis(a.ergebnis, lambda: update_ausfuehren(a.version, anlass=a.anlass))
         elif a.befehl == "datenbank-nachziehen":
             return _mit_ergebnis(a.ergebnis, datenbank_nachziehen)
+        elif a.befehl == "ki-einrichten":
+            return _mit_ergebnis(a.ergebnis, lambda: ki_einrichten(wenn_noetig=a.wenn_noetig))
         elif a.befehl == "auftraege":
             auftraege()
         elif a.befehl == "nachruesten":

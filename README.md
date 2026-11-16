@@ -148,13 +148,28 @@ Abmeldung von Kasse/TSE beim Finanzamt und den alten Rechner in der Tailscale-Ve
 - **Datenbank nachziehen (ab 0.5.1):** Kam Studio 0.53.0 mit einem älteren Installer auf den PC, fehlt das
   Datenbank-Image in der `.env`. Der nächtliche Lauf holt es nach (Sicherung, Image eintragen, Neustart; startet
   Studio nicht, kommt das bisherige Image zurück). Sofort: `sudo studio-betrieb datenbank-nachziehen`.
+- **KI-Dienste (ab 0.5.2, Studio ab 0.53.1):** KI-Worker, App-Läufer und PII-Gate (Compose-Profil `ki`). Bis 0.5.1
+  schaltete der Installer sie nie ein: Wissens-Eingänge holten nie ab („Wartet auf den ersten Lauf“), der nächtliche
+  Prüflauf blieb aus. Jetzt bei Neuinstallation, bei jedem Update und im nächtlichen Lauf (`kidienste.py`), immer in
+  dieser Reihenfolge: Studio läuft und hat migriert → `rollen.sh` legt die Datenbankrollen `studio_worker` und
+  `studio_laeufer` an und schreibt `.env.prozess*` → `ki` kommt in `COMPOSE_PROFILES` → Worker und Läufer starten neu,
+  das Gate startet → der Worker meldet sich an der Datenbank an und `rollen.sh --pruefen` meldet nur OK. Scheitert
+  ein Schritt, bleiben Worker und Läufer aus und `ki` kommt wieder heraus. Kasse und Tür sind nie betroffen, das
+  Update gilt trotzdem. Während eine neue Version migriert, stehen Worker und Läufer. Das Gate kommt aus `images.json`
+  (`pii`) und heißt lokal `studio-pii-gate:r-<digest>`. Ohne Gate bleiben die KI-Dienste aus. Abschalten je Server:
+  `STUDIO_KI=aus` in der `.env`. Ist die Einrichtung mit einer Studio-Version gescheitert, versucht der nächtliche Lauf
+  es erst mit der nächsten wieder. Sofort: `sudo studio-betrieb ki-einrichten`.
+- **Sicherungen mit Rollen (ab 0.5.2):** Eine Sicherung eines Studios mit KI-Diensten vergibt Rechte an die beiden
+  Rollen. Die Rollen gehören aber dem Datenbank-Cluster, nicht der Sicherung. Bis 0.5.1 brachen deshalb die
+  Probe-Wiederherstellung und die Wiederherstellung auf einem neuen PC ab („role studio_worker does not exist“).
+  Jetzt legt der Installer vorher Platzhalter-Rollen ohne Anmeldung an, `rollen.sh` macht sie danach fertig.
 - **Betriebssystem:** Sicherheitsupdates laufen über unattended-upgrades. Ein Neustart und Snap-Updates
   (Firefox im Kiosk) laufen nur im Wartungsfenster.
 - Studio im Container und dieser Dienst reden über `/var/lib/studio-austausch` (im Container
   `/data/host`). Das bindet `/opt/studio/compose.lokal.yml` ein, die der Installer erzeugt.
 
 Von Hand: `sudo studio-betrieb sichern`, `sudo studio-betrieb update-pruefen`, `sudo studio-betrieb status`,
-`sudo studio-betrieb update` (holt vorher den Installer), `sudo studio-betrieb datenbank-nachziehen`,
+`sudo studio-betrieb update` (holt vorher den Installer), `sudo studio-betrieb datenbank-nachziehen`, `sudo studio-betrieb ki-einrichten`,
 `sudo studio-betrieb anderes-studio`.
 
 ### Sicherheit

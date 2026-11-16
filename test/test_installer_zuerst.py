@@ -157,10 +157,13 @@ class NachtlaufTest(Basis):
         upd.assert_called_once_with("0.53.0", mock.ANY, anlass="automatisch")
 
     def test_ohne_neue_version_installer_und_dann_datenbank_im_neuen_installer(self):
+        # Seit 0.5.2 danach auch die KI-Dienste, ebenfalls im neuen Installer und nur, wenn nötig (kidienste.py)
         neu = mock.Mock(return_value={})
         self.pruefen(["0.52.1"], installer_aktualisieren=mock.Mock(return_value=True), _im_neuen_installer=neu,
-                     datenbank_nachziehen=mock.Mock(side_effect=AssertionError("alter Code")))
-        neu.assert_called_once_with(["datenbank-nachziehen"], mock.ANY)
+                     datenbank_nachziehen=mock.Mock(side_effect=AssertionError("alter Code")),
+                     ki_einrichten=mock.Mock(side_effect=AssertionError("alter Code")))
+        self.assertEqual(neu.call_args_list, [mock.call(["datenbank-nachziehen"], mock.ANY),
+                                              mock.call(["ki-einrichten", "--wenn-noetig"], mock.ANY)])
 
     def test_installer_aktuell_aber_datenbank_fehlt(self):
         nach = mock.Mock(return_value={})
