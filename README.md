@@ -135,6 +135,14 @@ Abmeldung von Kasse/TSE beim Finanzamt und den alten Rechner in der Tailscale-Ve
   Läuft ein Verkauf, startet kein Update. Vorher wird gesichert. Antwortet die neue Version nicht, geht es
   auf die alte zurück, notfalls samt Datenbank. Auch dieses Paket aktualisiert sich selbst (Prüfsumme aus
   `SHA256SUMS`).
+- **Datenbank mit pgvector (ab 0.5.0, Studio ab 0.53.0):** Nennt das Edge-Paket in `images.json` ein
+  Datenbank-Image (`ghcr.io/…/studio-db@sha256:…`), lädt der Installer es bei Neuinstallation und Update und
+  trägt es als `STUDIO_DB_IMAGE` in die `.env` ein. Die Datenbank startet dabei einmal neu. Er stellt nicht um,
+  wenn die `.env` schon ein eigenes Image nennt, wenn das Image eine andere Hauptversion oder ältere
+  Unterversion als die laufende Datenbank hätte oder wenn ihm die Erweiterung fehlt. Dann steht der Grund im
+  Protokoll, und Studio läuft wie bisher, nur die Wissens-App lässt sich nicht installieren. Scheitert das Update,
+  bleibt das neue Image, solange die alte Version damit startet. Die Probe-Wiederherstellung nimmt das Image der
+  laufenden Datenbank (bis 0.4.0 immer `postgres:16-alpine`, Sicherungen mit Wissen fielen dort durch).
 - **Betriebssystem:** Sicherheitsupdates laufen über unattended-upgrades. Ein Neustart und Snap-Updates
   (Firefox im Kiosk) laufen nur im Wartungsfenster.
 - Studio im Container und dieser Dienst reden über `/var/lib/studio-austausch` (im Container

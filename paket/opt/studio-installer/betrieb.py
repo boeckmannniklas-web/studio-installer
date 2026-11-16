@@ -375,8 +375,9 @@ def probe_wiederherstellung(dump: Path, log) -> dict:
 
 
 def _db_image() -> str:
-    aus = _ausfuehren(schritte._compose("config", "--images"), cwd=schritte.ZIEL, pruefen=False)
-    return next((z.strip() for z in aus.splitlines() if z.strip().startswith("postgres:")), "postgres:16-alpine")
+    """Das Image, mit dem die Datenbank läuft. Früher nur Namen mit „postgres:“: Mit studio-db (pgvector) nahm die Probe
+    postgres:16-alpine, und jede Sicherung eines Studios mit Wissen fiel durch (CREATE EXTENSION vector)."""
+    return schritte.db_image_aktuell()
 
 
 def verschluesseln(ordner: Path, ziel: Path, pub: str, log) -> None:
@@ -731,6 +732,10 @@ def update_ausfuehren(version: str | None = None, log=log_stdout, *, anlass: str
             edge_paket_einsetzen(neu, log)
             schritte.env_setzen({"STUDIO_VERSION": neu, "STUDIO_API_IMAGE": "studio-api",
                                  "STUDIO_WEB_IMAGE": "studio-web"})
+            # Datenbank mit pgvector, wenn das Paket eine nennt (Studio ab 0.53.0). Gesichert ist schon, offene Verkäufe
+            # gibt es nicht; die Datenbank startet beim folgenden up einmal neu.
+            zustand_aendern(update={"laeuft": {"nach": neu, "start": iso(start), "schritt": "Datenbank"}})
+            eintrag["db_image"] = schritte.db_image_einsetzen(antwort["registry"], log)
             # 4. Starten und prüfen
             zustand_aendern(update={"laeuft": {"nach": neu, "start": iso(start), "schritt": "Start"}})
             _ausfuehren(schritte._compose("up", "-d", "--no-build", "--remove-orphans"), log, cwd=schritte.ZIEL)
@@ -800,10 +805,22 @@ def _laeuft_mit(version: str, sekunden: float) -> bool:
         sekunden, pause=5))
 
 
+def _db_image_vorher(sicherung_alt: Path) -> tuple[bool, str | None]:
+    """(geändert, alter Wert) von STUDIO_DB_IMAGE gegenüber der .env von vor dem Update."""
+    if not (sicherung_alt / ".env").exists():
+        return False, None
+    vorher = schritte.env_lesen((sicherung_alt / ".env").read_text()).get("STUDIO_DB_IMAGE") or None
+    jetzt = schritte.env_lesen((schritte.ZIEL / ".env").read_text()).get("STUDIO_DB_IMAGE") or None
+    return vorher != jetzt, vorher
+
+
 def rueckweg(alt: str, sicherung_alt: Path, log) -> str:
     """Zurück auf die alte Version. Startet sie nicht (die Datenbank ist schon migriert),
-    kommt die Datenbank von vor dem Update zurück."""
+    kommt die Datenbank von vor dem Update zurück.
+    Ein neues Datenbank-Image (pgvector) bleibt zunächst: Es passt auch zur alten Version, und zurück hieße eine ältere
+    Unterversion auf demselben Datenverzeichnis. Erst wenn die alte Version damit nicht startet, kommt das alte Image zurück."""
     try:
+        db_geaendert, db_vorher = _db_image_vorher(sicherung_alt)
         for n in ("compose.yml", "profile.yml", "VERSION"):
             if (sicherung_alt / n).exists():
                 shutil.copy2(sicherung_alt / n, schritte.ZIEL / n)
@@ -813,7 +830,15 @@ def rueckweg(alt: str, sicherung_alt: Path, log) -> str:
         _ausfuehren(schritte._compose("up", "-d", "--no-build", "--remove-orphans"), log, cwd=schritte.ZIEL,
                     pruefen=False)
         if _laeuft_mit(alt, 240):
-            return f"Version {alt} läuft wieder, die Datenbank ist unverändert geblieben."
+            return f"Version {alt} läuft wieder, die Datenbank ist unverändert geblieben." + (
+                " Das neue Datenbank-Image mit pgvector bleibt." if db_geaendert else "")
+        if db_geaendert:
+            log("Die alte Version startet nicht – nehme auch das alte Datenbank-Image zurück …")
+            schritte.env_setzen({"STUDIO_DB_IMAGE": db_vorher})
+            _ausfuehren(schritte._compose("up", "-d", "--no-build", "--remove-orphans"), log, cwd=schritte.ZIEL,
+                        pruefen=False)
+            if _laeuft_mit(alt, 240):
+                return f"Version {alt} läuft wieder mit dem alten Datenbank-Image, die Daten sind unverändert geblieben."
         dump = sicherung_alt / "roh" / "db.dump"
         if not dump.exists():
             return f"Version {alt} startet nicht, und es gibt keine Datenbank-Kopie. Bitte den Support rufen."

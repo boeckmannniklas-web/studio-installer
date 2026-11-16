@@ -498,6 +498,114 @@ def _compose(*args: str) -> list[str]:
     return ["docker", "compose", "-p", PROJEKT, *dateien, "--env-file", str(ZIEL / ".env"), *args]
 
 
+# ── Datenbank-Image mit pgvector (Studio ab 0.53.0, deploy/postgres/README.md im Studio-Repo) ──────────────
+# Das Edge-Paket nennt in images.json ein festes Image (ghcr.io/…/studio-db@sha256:…). Es steckt im API-Image, dessen
+# Digest das signierte Manifest der Cloud nennt. compose.yml bleibt bei postgres:16-alpine; das Image kommt über
+# STUDIO_DB_IMAGE in der .env. Umgestellt wird nur, was der Installer selbst eingetragen hat oder was leer ist.
+DB_STANDARD = "postgres:16-alpine"
+DB_REF = re.compile(r"^ghcr\.io/[a-z0-9._/-]+/studio-db@sha256:[0-9a-f]{64}$")
+DB_ERWEITERUNG = "/usr/local/share/postgresql/extension/{}.control"
+
+
+def _ausgabe(befehl: list[str]) -> str | None:
+    """Nur stdout, ohne Protokoll; None, wenn der Befehl scheitert."""
+    try:
+        proc = subprocess.run(befehl, capture_output=True, text=True, cwd=ZIEL if ZIEL.exists() else None, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def pg_version(text: str | None) -> tuple[int, int] | None:
+    """'postgres (PostgreSQL) 16.16' -> (16, 16)."""
+    m = re.search(r"PostgreSQL\)?\s+(\d+)\.(\d+)", text or "")
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def db_image_aktuell() -> str:
+    """Das Image, mit dem compose die Datenbank startet (STUDIO_DB_IMAGE aufgelöst)."""
+    aus = _ausgabe(_compose("config", "--format", "json"))
+    try:
+        return json.loads(aus)["services"]["db"]["image"]
+    except (TypeError, ValueError, KeyError):
+        env = env_lesen((ZIEL / ".env").read_text()) if (ZIEL / ".env").exists() else {}
+        return env.get("STUDIO_DB_IMAGE") or DB_STANDARD
+
+
+def _db_version_jetzt() -> tuple[int, int] | None:
+    """PostgreSQL der laufenden Datenbank, sonst des Images, mit dem sie zuletzt lief. None: hier lief noch keine."""
+    laufend = pg_version(_ausgabe(_compose("exec", "-T", "db", "postgres", "--version")))
+    if laufend:
+        return laufend
+    bild = db_image_aktuell()
+    if _ausgabe(["docker", "image", "inspect", bild]) is None:
+        return None
+    return pg_version(_ausgabe(["docker", "run", "--rm", "--entrypoint", "postgres", bild, "--version"]))
+
+
+def images_ziehen(registry: dict, refs: list[str], log) -> None:
+    """Images von der Registry laden; Anmeldedaten nur in einem Wegwerf-Ordner (nie in /root/.docker)."""
+    with tempfile.TemporaryDirectory(prefix="studio-docker-") as konfig:
+        env = {"DOCKER_CONFIG": konfig}
+        _ausfuehren(["docker", "login", registry["server"], "--username", registry["benutzer"],
+                     "--password-stdin"], log, eingabe=registry["token"], env=env)
+        try:
+            for ref in refs:
+                _ausfuehren(["docker", "pull", ref], log, env=env)
+        finally:
+            _ausfuehren(["docker", "logout", registry["server"]], log, env=env, pruefen=False)
+
+
+def db_image_einsetzen(registry: dict, log) -> str | None:
+    """Datenbank-Image aus images.json des Pakets eintragen. Gibt das eingetragene Image zurück, sonst None.
+    Scheitert nie das Ganze: Ohne neues Image läuft Studio wie bisher, nur Apps mit Erweiterung (Wissen) fehlen."""
+    datei = ZIEL / "images.json"
+    if not datei.exists():
+        return None
+    try:
+        eintrag = json.loads(datei.read_text()).get("db") or {}
+    except (OSError, ValueError, AttributeError):
+        log("WARNUNG: images.json des Pakets ist nicht lesbar – die Datenbank bleibt, wie sie ist.")
+        return None
+    ref = str(eintrag.get("ref") or "")
+    if not DB_REF.match(ref):
+        log("WARNUNG: images.json nennt kein festes Datenbank-Image – die Datenbank bleibt, wie sie ist.")
+        return None
+    jetzt = env_lesen((ZIEL / ".env").read_text()).get("STUDIO_DB_IMAGE", "")
+    if jetzt == ref:
+        log("Datenbank-Image unverändert.")
+        return None
+    if jetzt and not DB_REF.match(jetzt):
+        log(f"Die .env nennt ein eigenes Datenbank-Image ({jetzt}) – es bleibt. "
+            "Umstellen von Hand: deploy/postgres/README.md im Studio-Repo.")
+        return None
+    log("Datenbank-Image mit pgvector laden …")
+    try:
+        images_ziehen(registry, [ref], log)
+    except Fehler as exc:
+        log(f"WARNUNG: Datenbank-Image nicht geladen ({exc}) – die Datenbank bleibt, wie sie ist.")
+        return None
+    neu = pg_version(_ausgabe(["docker", "run", "--rm", "--entrypoint", "postgres", ref, "--version"]))
+    fehlt = [e for e in (eintrag.get("erweiterungen") or ["vector"])
+             if not re.fullmatch(r"[a-z0-9_]+", str(e))
+             or _ausgabe(["docker", "run", "--rm", "--entrypoint", "test", ref, "-f", DB_ERWEITERUNG.format(e)]) is None]
+    if not neu or fehlt:
+        log(f"WARNUNG: Das Datenbank-Image ist unvollständig ({'Version unbekannt' if not neu else 'ohne ' + ', '.join(map(str, fehlt))})"
+            " – die Datenbank bleibt, wie sie ist.")
+        return None
+    alt = _db_version_jetzt()
+    # Nie auf eine andere Hauptversion (braucht pg_upgrade) und nie auf eine ältere Unterversion (Fable M21).
+    if alt and (neu[0] != alt[0] or neu[1] < alt[1]):
+        log(f"WARNUNG: Das Datenbank-Image hat PostgreSQL {neu[0]}.{neu[1]}, hier läuft {alt[0]}.{alt[1]} – "
+            "umgestellt wird nur auf dieselbe Hauptversion und keine ältere Unterversion. Die Datenbank bleibt, wie sie ist.")
+        return None
+    env_setzen({"STUDIO_DB_IMAGE": ref})
+    vorher = f", vorher {alt[0]}.{alt[1]}" if alt else ""
+    log(f"Datenbank-Image mit pgvector eingetragen (PostgreSQL {neu[0]}.{neu[1]}{vorher}). "
+        "Die Datenbank startet gleich einmal neu.")
+    return ref
+
+
 def _manifest(log) -> tuple[dict, dict]:
     a = _aktivierung()
     antwort = _anfrage("GET", "/api/v1/install/release", token=a["install_token"])
@@ -588,6 +696,8 @@ def installieren(log) -> dict:
     env_setzen({"STUDIO_API_IMAGE": "studio-api", "STUDIO_WEB_IMAGE": "studio-web", "STUDIO_VERSION": version})
     speicher.austausch_anlegen()
     speicher.compose_lokal_schreiben()
+    # Vor dem Einspielen einer Sicherung: Ein Dump eines Studios mit Wissen lässt sich nur mit pgvector einspielen.
+    db_image_einsetzen(registry, log)
     if wahl["wahl"] == "sicherung":
         sicherung_einspielen(wahl, log)
     if f["wahl"] == "plattform":
